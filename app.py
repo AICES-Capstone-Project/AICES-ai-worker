@@ -22,8 +22,12 @@ def ats():
         doc = request.files['pdf_doc']
         doc.save(os.path.join(UPLOAD_PATH, "file.pdf"))
         doc_path = os.path.join(UPLOAD_PATH, "file.pdf")
-        data = _read_file_from_path(doc_path)
-        data = ats_extractor(data)
+        
+        # Step 1: Extract text from PDF
+        resume_text = _read_file_from_path(doc_path)
+        
+        # Step 2: Parse resume with ATS extractor
+        data = ats_extractor(resume_text)
         
         # Try to parse JSON with error handling
         try:
@@ -36,16 +40,44 @@ def ats():
                 "error": "Failed to parse resume data",
                 "raw_response": data[:500] + "..." if len(data) > 500 else data
             }
+            return render_template('index.html', data=parsed_data, scores=None)
 
-        return render_template('index.html', data = parsed_data)
+        # Step 3: Calculate AI score automatically
+        scores = None
+        try:
+            # Default job requirements (can be customized later)
+            job_requirements = """
+            General Software Development Position:
+            - Bachelor's degree in Computer Science or related field
+            - Strong technical skills in programming languages and frameworks
+            - Relevant work experience in software development
+            - Good communication and teamwork skills
+            - Professional certifications are a plus
+            - Portfolio of completed projects
+            """
+            
+            print("📊 Calculating AI scores...")
+            scores = ai_score_calculator(parsed_data, job_requirements)
+            print(f"✅ Scores calculated: Total = {scores.get('total_score', 0)}")
+            
+        except Exception as score_error:
+            print(f"⚠️ Error calculating scores: {score_error}")
+            import traceback
+            traceback.print_exc()
+            # Continue even if scoring fails
+            scores = None
+
+        return render_template('index.html', data=parsed_data, scores=scores)
         
     except Exception as e:
         print(f"Error in ats route: {e}")
+        import traceback
+        traceback.print_exc()
         error_data = {
             "error": f"An error occurred: {str(e)}",
             "raw_response": None
         }
-        return render_template('index.html', data = error_data)
+        return render_template('index.html', data=error_data, scores=None)
  
 def _read_file_from_path(path):
     reader = PdfReader(path) 

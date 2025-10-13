@@ -82,7 +82,7 @@ def ats_extractor(resume_data):
             full_prompt,
             generation_config=genai.types.GenerationConfig(
                 temperature=0.0,
-                max_output_tokens=8192,  # Increased from 1500 to allow full response
+                max_output_tokens=8192, 
             )
         )
         

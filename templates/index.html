@@ -161,12 +161,217 @@
 
 			<div class="w-screen h-full pb-8">
 				<div class="flex flex-col justify-center items-center text-white">
-					<div class=" ">
+					<div class="w-full max-w-7xl px-4">
+						<!-- Parsed Resume Data -->
 						<div
 							id="dictionaryValues"
-							class="border border-1 border-white max-w-7xl p-8"
+							class="border border-1 border-white p-8 mb-8"
 						></div>
-						{%if data %}
+
+						<!-- AI Scores Section -->
+						{% if scores %}
+						<div
+							id="aiScores"
+							class="border border-1 border-blue-500 p-8 bg-blue-900/20 rounded-lg"
+						>
+							<h2 class="text-3xl font-bold mb-6 text-blue-300">
+								🤖 AI Resume Score Analysis
+							</h2>
+
+							<!-- Total Score - Large Display -->
+							<div
+								class="bg-gradient-to-r from-blue-600 to-purple-600 p-8 rounded-xl mb-8 text-center"
+							>
+								<div class="text-6xl font-bold mb-2">
+									{{ "%.2f"|format(scores.total_score) }}
+								</div>
+								<div class="text-xl opacity-90">Total Score (out of 100)</div>
+								<div class="mt-4 text-sm opacity-75">
+									{% if scores.total_score >= 85 %} 🌟 Excellent Match - Strong
+									Candidate {% elif scores.total_score >= 70 %} ✅ Good Match -
+									Qualified Candidate {% elif scores.total_score >= 55 %} ⚠️
+									Moderate Match - Additional Evaluation Needed {% else %} ❌
+									Weak Match - May Not Meet Requirements {% endif %}
+								</div>
+							</div>
+
+							<!-- Individual Scores Grid -->
+							<div
+								class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8"
+							>
+								<!-- Education Score -->
+								<div class="bg-white/10 p-6 rounded-lg border border-white/20">
+									<div class="flex items-center justify-between mb-2">
+										<span class="text-lg font-semibold">📚 Education</span>
+										<span class="text-2xl font-bold"
+											>{{ scores.education_score }}</span
+										>
+									</div>
+									<div class="w-full bg-gray-700 rounded-full h-2">
+										<div
+											class="bg-blue-500 h-2 rounded-full"
+											style="width: {{ scores.education_score }}%"
+										></div>
+									</div>
+									<div class="text-xs mt-1 opacity-75">Weight: 15%</div>
+								</div>
+
+								<!-- Work Experience Score -->
+								<div class="bg-white/10 p-6 rounded-lg border border-white/20">
+									<div class="flex items-center justify-between mb-2">
+										<span class="text-lg font-semibold"
+											>💼 Work Experience</span
+										>
+										<span class="text-2xl font-bold"
+											>{{ scores.work_experience_score }}</span
+										>
+									</div>
+									<div class="w-full bg-gray-700 rounded-full h-2">
+										<div
+											class="bg-green-500 h-2 rounded-full"
+											style="width: {{ scores.work_experience_score }}%"
+										></div>
+									</div>
+									<div class="text-xs mt-1 opacity-75">Weight: 25%</div>
+								</div>
+
+								<!-- Technical Skills Score -->
+								<div class="bg-white/10 p-6 rounded-lg border border-white/20">
+									<div class="flex items-center justify-between mb-2">
+										<span class="text-lg font-semibold"
+											>💻 Technical Skills</span
+										>
+										<span class="text-2xl font-bold"
+											>{{ scores.technical_skills_score }}</span
+										>
+									</div>
+									<div class="w-full bg-gray-700 rounded-full h-2">
+										<div
+											class="bg-purple-500 h-2 rounded-full"
+											style="width: {{ scores.technical_skills_score }}%"
+										></div>
+									</div>
+									<div class="text-xs mt-1 opacity-75">Weight: 35% ⭐</div>
+								</div>
+
+								<!-- Certifications Score -->
+								<div class="bg-white/10 p-6 rounded-lg border border-white/20">
+									<div class="flex items-center justify-between mb-2">
+										<span class="text-lg font-semibold">🏆 Certifications</span>
+										<span class="text-2xl font-bold"
+											>{{ scores.certifications_score }}</span
+										>
+									</div>
+									<div class="w-full bg-gray-700 rounded-full h-2">
+										<div
+											class="bg-yellow-500 h-2 rounded-full"
+											style="width: {{ scores.certifications_score }}%"
+										></div>
+									</div>
+									<div class="text-xs mt-1 opacity-75">Weight: 5%</div>
+								</div>
+
+								<!-- Projects Score -->
+								<div class="bg-white/10 p-6 rounded-lg border border-white/20">
+									<div class="flex items-center justify-between mb-2">
+										<span class="text-lg font-semibold">🔧 Projects</span>
+										<span class="text-2xl font-bold"
+											>{{ scores.projects_score }}</span
+										>
+									</div>
+									<div class="w-full bg-gray-700 rounded-full h-2">
+										<div
+											class="bg-orange-500 h-2 rounded-full"
+											style="width: {{ scores.projects_score }}%"
+										></div>
+									</div>
+									<div class="text-xs mt-1 opacity-75">Weight: 15%</div>
+								</div>
+
+								<!-- Languages & Skills Score -->
+								<div class="bg-white/10 p-6 rounded-lg border border-white/20">
+									<div class="flex items-center justify-between mb-2">
+										<span class="text-lg font-semibold"
+											>🗣️ Languages & Skills</span
+										>
+										<span class="text-2xl font-bold"
+											>{{ scores.languages_and_skills_score }}</span
+										>
+									</div>
+									<div class="w-full bg-gray-700 rounded-full h-2">
+										<div
+											class="bg-pink-500 h-2 rounded-full"
+											style="width: {{ scores.languages_and_skills_score }}%"
+										></div>
+									</div>
+									<div class="text-xs mt-1 opacity-75">Weight: 5%</div>
+								</div>
+							</div>
+
+							<!-- AI Explanations -->
+							{% if scores.AIExplanation %}
+							<div class="bg-black/30 p-6 rounded-lg">
+								<h3 class="text-2xl font-bold mb-4 text-blue-300">
+									💬 AI Analysis & Feedback
+								</h3>
+								<div class="space-y-4">
+									<div class="border-l-4 border-blue-500 pl-4">
+										<strong class="text-blue-300">📚 Education:</strong>
+										<p class="mt-1 text-gray-300">
+											{{ scores.AIExplanation.education }}
+										</p>
+									</div>
+									<div class="border-l-4 border-green-500 pl-4">
+										<strong class="text-green-300">💼 Work Experience:</strong>
+										<p class="mt-1 text-gray-300">
+											{{ scores.AIExplanation.work_experience }}
+										</p>
+									</div>
+									<div class="border-l-4 border-purple-500 pl-4">
+										<strong class="text-purple-300"
+											>💻 Technical Skills:</strong
+										>
+										<p class="mt-1 text-gray-300">
+											{{ scores.AIExplanation.technical_skills }}
+										</p>
+									</div>
+									<div class="border-l-4 border-yellow-500 pl-4">
+										<strong class="text-yellow-300">🏆 Certifications:</strong>
+										<p class="mt-1 text-gray-300">
+											{{ scores.AIExplanation.certifications }}
+										</p>
+									</div>
+									<div class="border-l-4 border-orange-500 pl-4">
+										<strong class="text-orange-300">🔧 Projects:</strong>
+										<p class="mt-1 text-gray-300">
+											{{ scores.AIExplanation.projects }}
+										</p>
+									</div>
+									<div class="border-l-4 border-pink-500 pl-4">
+										<strong class="text-pink-300"
+											>🗣️ Languages & Soft Skills:</strong
+										>
+										<p class="mt-1 text-gray-300">
+											{{ scores.AIExplanation.languages_soft }}
+										</p>
+									</div>
+								</div>
+							</div>
+							{% endif %}
+
+							<!-- Score Breakdown Legend -->
+							<div class="mt-6 p-4 bg-black/20 rounded-lg text-sm">
+								<strong>📊 Scoring Guide:</strong>
+								<div class="grid grid-cols-2 md:grid-cols-5 gap-2 mt-2">
+									<div>0-40: Poor</div>
+									<div>41-60: Below Average</div>
+									<div>61-75: Average</div>
+									<div>76-85: Good</div>
+									<div>86-100: Excellent</div>
+								</div>
+							</div>
+						</div>
+						{% endif %} {%if data %}
 						<script>
 							// Form submission handling
 							document.addEventListener("DOMContentLoaded", function () {
@@ -218,7 +423,8 @@
 								}
 
 							function generateHTML(data) {
-							    var html = '<pre class="text-left text-white p-4 bg-black/30 rounded overflow-auto">';
+							    var html = '<h2 class="text-3xl font-bold mb-4 text-white">📄 Parsed Resume Data</h2>';
+							    html += '<pre class="text-left text-white p-4 bg-black/30 rounded overflow-auto">';
 							    html += JSON.stringify(data, null, 2);
 							    html += '</pre>';
 							    return html;

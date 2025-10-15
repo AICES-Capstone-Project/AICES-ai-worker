@@ -1,6 +1,20 @@
-Flask==3.0.2
-pypdf==4.1.0
-openai==1.16.2
-google-generativeai==0.3.2
-pyyaml==6.0.1
-requests==2.31.0
+# Core dependencies for Resume Parser with Batch Processing
+google-generativeai>=0.3.0
+PyYAML>=6.0
+
+# File processing libraries
+PyPDF2>=3.0.0
+python-docx>=0.8.11
+docx2txt>=0.8
+
+# Data processing and export
+pandas>=1.5.0
+openpyxl>=3.0.0
+
+# Optional: For better text extraction
+python-magic>=0.4.27
+
+# Development dependencies (optional)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=5.0.0

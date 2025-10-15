@@ -120,10 +120,30 @@
 							làm việc...
 						</p>
 					</div>
-					<div class="mt-10 flex items-center gap-x-6">
+
+					<!-- Tab Selection -->
+					<div class="mt-8 flex gap-4">
+						<button
+							id="singleTab"
+							class="px-6 py-2 rounded-lg bg-blue-500 text-white font-semibold"
+							onclick="switchTab('single')"
+						>
+							📄 Single CV
+						</button>
+						<button
+							id="batchTab"
+							class="px-6 py-2 rounded-lg bg-gray-700 text-gray-300 font-semibold"
+							onclick="switchTab('batch')"
+						>
+							📚 Batch Processing (20+ CVs)
+						</button>
+					</div>
+
+					<!-- Single CV Form -->
+					<div id="singleForm" class="mt-6">
 						<form action="/process" method="post" enctype="multipart/form-data">
 							<div
-								class="mt-10 flex flex-col justify-start items-start sm:flex-row sm:items-center gap-x-6"
+								class="flex flex-col justify-start items-start sm:flex-row sm:items-center gap-x-6"
 							>
 								<button
 									type="submit"
@@ -142,6 +162,94 @@
 								/>
 							</div>
 						</form>
+					</div>
+
+					<!-- Batch CV Form -->
+					<div id="batchForm" class="mt-6 hidden">
+						<form id="batchProcessForm" enctype="multipart/form-data">
+							<div class="flex flex-col gap-4">
+								<!-- Multiple file input -->
+								<div>
+									<label class="block text-white text-sm font-semibold mb-2">
+										📁 Select Multiple CV Files (PDF, DOCX, DOC)
+									</label>
+									<input
+										type="file"
+										name="pdf_docs"
+										id="pdf_docs"
+										accept=".pdf,.docx,.doc"
+										multiple
+										class="drop-shadow-md bg-white/10 font-semibold leading-6 text-gray-900 border border-blue-300 py-2 px-4 rounded-2xl block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-400 hover:file:bg-blue-100"
+									/>
+									<p class="text-gray-400 text-xs mt-2">
+										Selected: <span id="fileCount">0</span> files
+									</p>
+								</div>
+
+								<!-- Job requirements (optional) -->
+								<div>
+									<label class="block text-white text-sm font-semibold mb-2">
+										💼 Job Requirements (Optional)
+									</label>
+									<textarea
+										name="job_requirements"
+										id="job_requirements"
+										rows="4"
+										placeholder="Enter job requirements to calculate AI scores..."
+										class="w-full bg-white/10 border border-blue-300 rounded-lg px-4 py-2 text-white placeholder-gray-400"
+									></textarea>
+								</div>
+
+								<!-- Process button -->
+								<button
+									type="submit"
+									id="batchProcessBtn"
+									class="bg-blue-500 px-8 rounded-2xl py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-400/90 disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									🚀 Start Batch Processing
+								</button>
+							</div>
+						</form>
+
+						<!-- Progress Section -->
+						<div id="progressSection" class="mt-6 hidden">
+							<div class="bg-black/30 p-6 rounded-lg border border-blue-500">
+								<h3 class="text-xl font-bold text-white mb-4">
+									⏳ Processing Progress
+								</h3>
+
+								<!-- Progress bar -->
+								<div class="mb-4">
+									<div class="flex justify-between text-sm text-gray-300 mb-2">
+										<span id="progressText">0 / 0 CVs processed</span>
+										<span id="progressPercent">0%</span>
+									</div>
+									<div class="w-full bg-gray-700 rounded-full h-4">
+										<div
+											id="progressBar"
+											class="bg-gradient-to-r from-blue-500 to-purple-500 h-4 rounded-full transition-all duration-500"
+											style="width: 0%"
+										></div>
+									</div>
+								</div>
+
+								<!-- Current file -->
+								<p class="text-gray-300 text-sm">
+									<strong>Current:</strong> <span id="currentFile">-</span>
+								</p>
+							</div>
+						</div>
+
+						<!-- Results Section (Accordion) -->
+						<div id="resultsSection" class="mt-6 hidden">
+							<div class="bg-black/30 p-6 rounded-lg border border-green-500">
+								<h3 class="text-2xl font-bold text-green-300 mb-4">
+									✅ Batch Processing Complete!
+								</h3>
+								<div id="resultsSummary" class="mb-4 text-white"></div>
+								<div id="resultsAccordion" class="space-y-2"></div>
+							</div>
+						</div>
 					</div>
 				</div>
 				<div
@@ -432,6 +540,337 @@
 								displayDictionaryValues({{ data| tojson }});
 						</script>
 						{% endif %}
+
+						<!-- Batch Processing JavaScript -->
+						<script>
+							// Tab switching
+							function switchTab(tab) {
+								const singleTab = document.getElementById("singleTab");
+								const batchTab = document.getElementById("batchTab");
+								const singleForm = document.getElementById("singleForm");
+								const batchForm = document.getElementById("batchForm");
+
+								if (tab === "single") {
+									singleTab.className =
+										"px-6 py-2 rounded-lg bg-blue-500 text-white font-semibold";
+									batchTab.className =
+										"px-6 py-2 rounded-lg bg-gray-700 text-gray-300 font-semibold";
+									singleForm.classList.remove("hidden");
+									batchForm.classList.add("hidden");
+								} else {
+									singleTab.className =
+										"px-6 py-2 rounded-lg bg-gray-700 text-gray-300 font-semibold";
+									batchTab.className =
+										"px-6 py-2 rounded-lg bg-blue-500 text-white font-semibold";
+									singleForm.classList.add("hidden");
+									batchForm.classList.remove("hidden");
+								}
+							}
+
+							// File count update
+							document
+								.getElementById("pdf_docs")
+								?.addEventListener("change", function () {
+									const fileCount = this.files.length;
+									document.getElementById("fileCount").textContent = fileCount;
+								});
+
+							// Batch form submission
+							document
+								.getElementById("batchProcessForm")
+								?.addEventListener("submit", async function (e) {
+									e.preventDefault();
+
+									const fileInput = document.getElementById("pdf_docs");
+									const files = fileInput.files;
+
+									if (files.length === 0) {
+										alert("Please select at least one CV file!");
+										return;
+									}
+
+									// Prepare form data
+									const formData = new FormData();
+									for (let i = 0; i < files.length; i++) {
+										formData.append("pdf_docs", files[i]);
+									}
+
+									const jobReq =
+										document.getElementById("job_requirements").value;
+									if (jobReq) {
+										formData.append("job_requirements", jobReq);
+									}
+
+									// Disable button
+									const btn = document.getElementById("batchProcessBtn");
+									btn.disabled = true;
+									btn.textContent = "⏳ Starting...";
+
+									// Show progress section
+									const progressSection =
+										document.getElementById("progressSection");
+									progressSection.classList.remove("hidden");
+
+									try {
+										// Start batch processing
+										const response = await fetch("/batch_process", {
+											method: "POST",
+											body: formData,
+										});
+
+										if (!response.ok) {
+											throw new Error("Failed to start batch processing");
+										}
+
+										// Start listening to progress updates
+										listenToProgress();
+									} catch (error) {
+										console.error("Error:", error);
+										alert("Error starting batch processing: " + error.message);
+										btn.disabled = false;
+										btn.textContent = "🚀 Start Batch Processing";
+									}
+								});
+
+							// Listen to Server-Sent Events for progress
+							function listenToProgress() {
+								const eventSource = new EventSource("/batch_progress");
+
+								eventSource.onmessage = function (event) {
+									const data = JSON.parse(event.data);
+
+									// Update progress bar
+									document.getElementById(
+										"progressText"
+									).textContent = `${data.completed} / ${data.total} CVs processed`;
+									document.getElementById(
+										"progressPercent"
+									).textContent = `${data.percentage}%`;
+									document.getElementById(
+										"progressBar"
+									).style.width = `${data.percentage}%`;
+									document.getElementById("currentFile").textContent =
+										data.current_file || "Waiting...";
+
+									// Check if completed
+									if (data.status === "completed") {
+										eventSource.close();
+										loadResults();
+									} else if (data.status === "error") {
+										eventSource.close();
+										alert("Error during batch processing!");
+										resetBatchForm();
+									}
+								};
+
+								eventSource.onerror = function (error) {
+									console.error("EventSource error:", error);
+									eventSource.close();
+								};
+							}
+
+							// Load and display results
+							async function loadResults() {
+								try {
+									const response = await fetch("/batch_results");
+									const data = await response.json();
+
+									// Hide progress, show results
+									document
+										.getElementById("progressSection")
+										.classList.add("hidden");
+									const resultsSection =
+										document.getElementById("resultsSection");
+									resultsSection.classList.remove("hidden");
+
+									// Display summary
+									const completed = data.results.filter(
+										(r) => r.status === "completed"
+									).length;
+									const failed = data.results.filter(
+										(r) => r.status === "failed"
+									).length;
+
+									document.getElementById("resultsSummary").innerHTML = `
+										<div class="grid grid-cols-3 gap-4 text-center">
+											<div class="bg-blue-500/20 p-4 rounded-lg">
+												<div class="text-3xl font-bold">${data.total}</div>
+												<div class="text-sm">Total CVs</div>
+											</div>
+											<div class="bg-green-500/20 p-4 rounded-lg">
+												<div class="text-3xl font-bold">${completed}</div>
+												<div class="text-sm">✅ Completed</div>
+											</div>
+											<div class="bg-red-500/20 p-4 rounded-lg">
+												<div class="text-3xl font-bold">${failed}</div>
+												<div class="text-sm">❌ Failed</div>
+											</div>
+										</div>
+									`;
+
+									// Display accordion
+									displayAccordion(data.results);
+
+									// Reset form
+									resetBatchForm();
+								} catch (error) {
+									console.error("Error loading results:", error);
+									alert("Error loading results!");
+								}
+							}
+
+							// Display results in accordion format
+							function displayAccordion(results) {
+								const accordion = document.getElementById("resultsAccordion");
+								accordion.innerHTML = "";
+
+								// Sort by score (if available)
+								results.sort((a, b) => {
+									const scoreA = a.scores?.total_score || 0;
+									const scoreB = b.scores?.total_score || 0;
+									return scoreB - scoreA;
+								});
+
+								results.forEach((result, index) => {
+									const accordionItem = createAccordionItem(result, index);
+									accordion.appendChild(accordionItem);
+								});
+							}
+
+							// Create accordion item for each CV
+							function createAccordionItem(result, index) {
+								const div = document.createElement("div");
+								div.className =
+									"border border-gray-600 rounded-lg overflow-hidden";
+
+								// Status badge
+								const statusBadge =
+									result.status === "completed"
+										? '<span class="bg-green-500 text-white px-2 py-1 rounded text-xs">✅ Success</span>'
+										: '<span class="bg-red-500 text-white px-2 py-1 rounded text-xs">❌ Failed</span>';
+
+								// Score badge (if available)
+								const scoreBadge = result.scores
+									? `<span class="bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-bold">
+											${result.scores.total_score.toFixed(1)} / 100
+										</span>`
+									: "";
+
+								// Header
+								const header = document.createElement("button");
+								header.className =
+									"w-full bg-gray-800 hover:bg-gray-700 p-4 text-left flex justify-between items-center";
+								header.onclick = () => toggleAccordion(index);
+								header.innerHTML = `
+									<div class="flex items-center gap-4">
+										<span class="text-white font-semibold">${result.filename}</span>
+										${statusBadge}
+										${scoreBadge}
+									</div>
+									<svg id="icon-${index}" class="w-5 h-5 text-white transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+									</svg>
+								`;
+
+								// Content
+								const content = document.createElement("div");
+								content.id = `content-${index}`;
+								content.className = "hidden bg-gray-900 p-4";
+								content.innerHTML = createAccordionContent(result);
+
+								div.appendChild(header);
+								div.appendChild(content);
+
+								return div;
+							}
+
+							// Toggle accordion
+							function toggleAccordion(index) {
+								const content = document.getElementById(`content-${index}`);
+								const icon = document.getElementById(`icon-${index}`);
+
+								if (content.classList.contains("hidden")) {
+									content.classList.remove("hidden");
+									icon.classList.add("rotate-180");
+								} else {
+									content.classList.add("hidden");
+									icon.classList.remove("rotate-180");
+								}
+							}
+
+							// Create accordion content
+							function createAccordionContent(result) {
+								if (result.status === "failed") {
+									return `
+										<div class="text-red-400">
+											<strong>Error:</strong> ${result.error || "Unknown error"}
+										</div>
+									`;
+								}
+
+								let html = "";
+
+								// Scores section
+								if (result.scores) {
+									html += `
+										<div class="mb-6">
+											<h4 class="text-lg font-bold text-blue-300 mb-3">📊 AI Scores</h4>
+											<div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+												<div class="bg-white/10 p-3 rounded">
+													<div class="text-xs text-gray-400">Education</div>
+													<div class="text-xl font-bold text-white">${result.scores.education_score}</div>
+												</div>
+												<div class="bg-white/10 p-3 rounded">
+													<div class="text-xs text-gray-400">Work Experience</div>
+													<div class="text-xl font-bold text-white">${result.scores.work_experience_score}</div>
+												</div>
+												<div class="bg-white/10 p-3 rounded">
+													<div class="text-xs text-gray-400">Technical Skills</div>
+													<div class="text-xl font-bold text-white">${result.scores.technical_skills_score}</div>
+												</div>
+												<div class="bg-white/10 p-3 rounded">
+													<div class="text-xs text-gray-400">Certifications</div>
+													<div class="text-xl font-bold text-white">${result.scores.certifications_score}</div>
+												</div>
+												<div class="bg-white/10 p-3 rounded">
+													<div class="text-xs text-gray-400">Projects</div>
+													<div class="text-xl font-bold text-white">${result.scores.projects_score}</div>
+												</div>
+												<div class="bg-white/10 p-3 rounded">
+													<div class="text-xs text-gray-400">Languages & Skills</div>
+													<div class="text-xl font-bold text-white">${result.scores.languages_and_skills_score}</div>
+												</div>
+											</div>
+										</div>
+									`;
+								}
+
+								// Parsed data section
+								if (result.parsed_data) {
+									html += `
+										<div>
+											<h4 class="text-lg font-bold text-green-300 mb-3">📄 Parsed Resume Data</h4>
+											<pre class="bg-black/50 p-4 rounded text-sm text-gray-300 overflow-auto max-h-96">${JSON.stringify(
+												result.parsed_data,
+												null,
+												2
+											)}</pre>
+										</div>
+									`;
+								}
+
+								return html;
+							}
+
+							// Reset batch form
+							function resetBatchForm() {
+								const btn = document.getElementById("batchProcessBtn");
+								btn.disabled = false;
+								btn.textContent = "🚀 Start Batch Processing";
+								document.getElementById("batchProcessForm").reset();
+								document.getElementById("fileCount").textContent = "0";
+							}
+						</script>
 					</div>
 				</div>
 			</div>

@@ -322,6 +322,8 @@ from datetime import datetime
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
+from typing import List, Dict, Optional
 
 
 def get_supported_file_types():
@@ -496,7 +498,220 @@ def process_single_cv(file_path, job_requirements="", max_retries=3):
     return result
 
 
-def process_multiple_cvs(cv_files, job_requirements="", max_workers=3, output_folder="output"):
+# =============================================================================
+# ASYNC BATCH PROCESSING (FASTER!)
+# =============================================================================
+
+async def process_single_cv_async(file_path: str, job_requirements: str = "", max_retries: int = 3) -> Dict:
+    """
+    Async version - Xử lý một CV đơn lẻ với retry mechanism
+    
+    Args:
+        file_path: Đường dẫn đến file CV
+        job_requirements: Yêu cầu công việc để tính điểm
+        max_retries: Số lần thử lại tối đa
+        
+    Returns:
+        dict: Kết quả xử lý CV
+    """
+    filename = os.path.basename(file_path)
+    result = {
+        'filename': filename,
+        'file_path': file_path,
+        'status': 'pending',
+        'parsed_data': None,
+        'scores': None,
+        'error': None,
+        'processing_time': 0
+    }
+    
+    start_time = time.time()
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"🔄 Xử lý CV {attempt + 1}/{max_retries}: {filename}")
+            
+            # Bước 1: Trích xuất text từ file (run in executor để không block)
+            loop = asyncio.get_event_loop()
+            resume_text = await loop.run_in_executor(None, extract_text_from_file, file_path)
+            
+            if not resume_text:
+                result['error'] = "Không thể trích xuất text từ file"
+                result['status'] = 'failed'
+                break
+            
+            # Bước 2: Parse CV với AI (run in executor)
+            parsed_data = await loop.run_in_executor(None, ats_extractor, resume_text)
+            
+            if not parsed_data:
+                result['error'] = "AI không thể parse CV"
+                result['status'] = 'failed'
+                break
+            
+            # Bước 3: Tính điểm (nếu có job requirements)
+            scores = None
+            if job_requirements:
+                scores = await loop.run_in_executor(
+                    None, 
+                    ai_score_calculator, 
+                    parsed_data, 
+                    job_requirements
+                )
+            
+            # Thành công
+            result['parsed_data'] = parsed_data
+            result['scores'] = scores
+            result['status'] = 'completed'
+            result['processing_time'] = time.time() - start_time
+            
+            print(f"✅ Hoàn thành: {filename} (thời gian: {result['processing_time']:.2f}s)")
+            break
+            
+        except Exception as e:
+            print(f"❌ Lỗi lần {attempt + 1} khi xử lý {filename}: {e}")
+            if attempt == max_retries - 1:
+                result['error'] = str(e)
+                result['status'] = 'failed'
+                result['processing_time'] = time.time() - start_time
+    
+    return result
+
+
+async def process_multiple_cvs_async(
+    cv_files: List[str], 
+    job_requirements: str = "", 
+    max_concurrent: int = 20,
+    output_folder: str = "output"
+) -> List[Dict]:
+    """
+    ASYNC VERSION - Xử lý nhiều CV cùng lúc với asyncio.gather
+    
+    Args:
+        cv_files: Danh sách đường dẫn file CV
+        job_requirements: Yêu cầu công việc để tính điểm
+        max_concurrent: Số lượng CV xử lý đồng thời tối đa
+        output_folder: Thư mục lưu kết quả
+        
+    Returns:
+        list: Danh sách kết quả xử lý tất cả CV
+    """
+    print(f"🚀 Bắt đầu xử lý ASYNC {len(cv_files)} CV với {max_concurrent} concurrent tasks...")
+    
+    # Tạo thư mục output nếu chưa có
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    # Chia nhỏ thành batches để tránh quá tải
+    results = []
+    total_count = len(cv_files)
+    
+    for i in range(0, total_count, max_concurrent):
+        batch = cv_files[i:i + max_concurrent]
+        batch_num = i // max_concurrent + 1
+        total_batches = (total_count + max_concurrent - 1) // max_concurrent
+        
+        print(f"📦 Processing batch {batch_num}/{total_batches} ({len(batch)} CVs)...")
+        
+        # Xử lý batch với asyncio.gather
+        batch_tasks = [
+            process_single_cv_async(cv_file, job_requirements)
+            for cv_file in batch
+        ]
+        
+        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+        
+        # Xử lý exceptions
+        for idx, result in enumerate(batch_results):
+            if isinstance(result, Exception):
+                results.append({
+                    'filename': os.path.basename(batch[idx]),
+                    'file_path': batch[idx],
+                    'status': 'failed',
+                    'error': str(result),
+                    'parsed_data': None,
+                    'scores': None,
+                    'processing_time': 0
+                })
+            else:
+                results.append(result)
+        
+        completed = len(results)
+        print(f"📊 Tiến độ: {completed}/{total_count} ({completed/total_count*100:.1f}%)")
+    
+    # Sắp xếp kết quả theo filename
+    results.sort(key=lambda x: x['filename'])
+    
+    print(f"🎉 Hoàn thành xử lý {len(results)} CV!")
+    return results
+
+
+async def batch_process_cvs_async(
+    cv_folder_path: str,
+    job_requirements: str = "",
+    max_concurrent: int = 20,
+    output_format: str = 'excel'
+) -> List[Dict]:
+    """
+    ASYNC VERSION - Function chính để xử lý batch nhiều CV
+    
+    Args:
+        cv_folder_path: Đường dẫn thư mục chứa CV
+        job_requirements: Yêu cầu công việc để tính điểm
+        max_concurrent: Số CV xử lý đồng thời
+        output_format: Định dạng export ('excel' hoặc 'csv')
+        
+    Returns:
+        list: Kết quả xử lý tất cả CV
+    """
+    print("🚀 BẮT ĐẦU ASYNC BATCH PROCESSING CV")
+    print("="*50)
+    
+    start_time = time.time()
+    
+    # Bước 1: Quét file CV
+    cv_files = scan_cv_files(cv_folder_path)
+    if not cv_files:
+        print("❌ Không tìm thấy file CV nào!")
+        return []
+    
+    # Bước 2: Xử lý batch CV với async
+    results = await process_multiple_cvs_async(
+        cv_files=cv_files,
+        job_requirements=job_requirements,
+        max_concurrent=max_concurrent
+    )
+    
+    # Bước 3: Export kết quả
+    if results:
+        if output_format.lower() == 'excel':
+            export_results_to_excel(results, job_requirements=job_requirements)
+        else:
+            export_results_to_csv(results)
+    
+    # Bước 4: In tóm tắt
+    total_time = time.time() - start_time
+    print_batch_summary(results)
+    print(f"\n⏱️  TOTAL TIME: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+    print(f"⚡ AVERAGE: {total_time/len(results):.2f} seconds per CV")
+    
+    return results
+
+
+def run_async_batch_processing(cv_folder_path: str, job_requirements: str = "", max_concurrent: int = 20):
+    """
+    Wrapper function để chạy async batch processing từ sync code
+    
+    Usage:
+        results = run_async_batch_processing("cv_folder", "job requirements", max_concurrent=20)
+    """
+    return asyncio.run(batch_process_cvs_async(cv_folder_path, job_requirements, max_concurrent))
+
+
+# =============================================================================
+# ORIGINAL THREADING VERSION (KEPT FOR COMPATIBILITY)
+# =============================================================================
+
+def process_multiple_cvs(cv_files, job_requirements="", max_workers=20, output_folder="output"):
     """
     Xử lý nhiều CV cùng lúc với threading
     
@@ -728,7 +943,7 @@ def print_batch_summary(results):
 # MAIN BATCH PROCESSING FUNCTION
 # =============================================================================
 
-def batch_process_cvs(cv_folder_path, job_requirements="", max_workers=3, output_format='excel'):
+def batch_process_cvs(cv_folder_path, job_requirements="", max_workers=20, output_format='excel'):
     """
     Function chính để xử lý batch nhiều CV
     

@@ -2,8 +2,18 @@
 google-generativeai>=0.3.0
 PyYAML>=6.0
 
+# FastAPI and web server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+jinja2>=3.1.2
+
+# Flask (legacy - can be removed if only using FastAPI)
+flask>=3.0.0
+
 # File processing libraries
 PyPDF2>=3.0.0
+pypdf>=3.17.0
 python-docx>=0.8.11
 docx2txt>=0.8
 

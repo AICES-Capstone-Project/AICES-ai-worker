@@ -1,66 +1,69 @@
-# Python
+# =========================================
+# PYTHON
+# =========================================
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
+
+# Distribution / Packaging
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.eggs/
+wheels/
+sdist/
 
 # Virtual Environment
 venv/
 ENV/
 env/
-.venv
+.venv/
 
-# IDE
+# Byte-compiled / cache
+.pytest_cache/
+.coverage
+htmlcov/
+.uvicorn/
+
+# =========================================
+# IDE / EDITOR
+# =========================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+Thumbs.db
 
-# Config files (contains API keys)
-config.yaml
+# =========================================
+# CONFIG (nhạy cảm)
+# =========================================
 .env
+config.yaml
 
-# Upload directories
-__DATA__/
-output/
+# Nếu bạn có config.py chứa key → thêm:
+# config.py
 
-# Logs
+# =========================================
+# LOGS / TEMP / OUTPUT
+# =========================================
 *.log
 logs/
-
-# Test files
-.pytest_cache/
-.coverage
-htmlcov/
-
-# FastAPI/Uvicorn
-.uvicorn/
-
-# OS
-Thumbs.db
-.DS_Store
-
-# Temporary files
 *.tmp
 *.bak
-*.swp
-.~*
+output/
+__DATA__/
 
+# =========================================
+# DOCKER
+# =========================================
+# Ignore Docker layers nếu build local
+docker-compose.override.yml
+
+# =========================================
+# PROJECT SPECIFIC
+# =========================================
+# Nếu callback_client.py hoặc redis_client.py chứa secrets
+# thì KHÔNG ignore → vì code cần chạy.
+# Nhưng nếu bạn để credentials trong đó thì phải refactor qua ENV.

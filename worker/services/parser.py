@@ -42,6 +42,7 @@ def _normalize_json(raw_text: str) -> Dict[str, Any]:
         return json.loads(cleaned)
     except json.JSONDecodeError as exc:
         logger.debug("Gemini response was not valid JSON: %s", cleaned)
+        logger.error("RAW Gemini output (first 1000 chars): %s", raw_text[:1000])
         raise ResumeParsingError("Gemini returned invalid JSON") from exc
 
 

@@ -19,6 +19,7 @@ class AIScoringError(RuntimeError):
 
 
 def _clean_ai_response(raw_text: str) -> Dict[str, Any]:
+    """Clean and parse AI response, stripping markdown fences."""
     cleaned = raw_text.strip()
     if cleaned.startswith("```json"):
         cleaned = cleaned[7:]
@@ -31,6 +32,11 @@ def _clean_ai_response(raw_text: str) -> Dict[str, Any]:
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError as exc:
+        # Log raw text for debugging (truncate to 5000 chars to avoid log spam)
+        logger.error(
+            "Invalid JSON from Gemini (first 5000 chars): %s",
+            raw_text[:5000] if len(raw_text) > 5000 else raw_text
+        )
         raise AIScoringError(
             "Gemini returned invalid JSON during scoring") from exc
 
@@ -144,7 +150,8 @@ def _normalize_ai_response(result: Dict[str, Any]) -> Dict[str, Any]:
     ai_explanation = result.get("AIExplanation", "")
     if isinstance(ai_explanation, dict):
         # Convert dict to string representation if needed
-        ai_explanation = json.dumps(ai_explanation, ensure_ascii=False)
+        ai_explanation = ai_explanation.strip('"')
+
     elif not isinstance(ai_explanation, str):
         ai_explanation = str(ai_explanation) if ai_explanation else ""
     
@@ -170,9 +177,16 @@ def _calculate_weighted_total_score(
     items: List[Dict[str, Any]],
     criteria_list: List[Dict[str, Any]]
 ) -> float:
-    """Calculate weighted total score from criteria items."""
+    """Calculate weighted total score from criteria items.
+    
+    Handles weight as Decimal/float/string/null from .NET serialization.
+    """
     # Create a mapping of criteriaId to weight
-    criteria_weights = {int(c["criteriaId"]): float(c.get("weight", 0.0)) for c in criteria_list}
+    # Use "or 0.0" to safely handle null values from .NET Decimal serialization
+    criteria_weights = {
+        int(c["criteriaId"]): float(c.get("weight") or 0.0)
+        for c in criteria_list
+    }
     
     total = 0.0
     for item in items:

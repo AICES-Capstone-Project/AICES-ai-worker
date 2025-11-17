@@ -17,9 +17,10 @@ services:
     depends_on:
       - redis # Ensure Redis is started before the worker
     environment:
-      - REDIS_HOST=redis://10.250.0.2:6379 # Internal Redis hostname
-      - BACKEND_API_URL=https://aices-api-632140981337.asia-southeast1.run.app/ # URL to post results back to .NET API
-      - GEMINI_API_KEY=${AIzaSyAWI_RTQEJ22gVZnOhZT_XK_OQQsRtdL4k} # Loaded from .env
+      REDIS_HOST: ${REDIS_HOST}
+      BACKEND_API_URL: ${BACKEND_API_URL}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LOG_LEVEL: ${LOG_LEVEL}
     logging:
       driver: "json-file" # Use JSON file logging
       options:

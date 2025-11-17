@@ -20,4 +20,4 @@ COPY . .
 EXPOSE 8080
 
 # run worker
-CMD ["python", "worker/worker.py"]
+CMD ["python", "worker.py"]

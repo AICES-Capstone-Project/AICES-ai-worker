@@ -6,6 +6,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+import google.generativeai as genai
+
 from worker.services.gemini_client import get_model
 
 logger = logging.getLogger(__name__)
@@ -144,8 +146,19 @@ def _validate_ai_response_structure(result: Dict[str, Any]) -> None:
             )
 
 
-def _normalize_ai_response(result: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize AI response: ensure types and structure."""
+def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize AI response: ensure types and structure.
+    
+    Args:
+        result: AI response dict
+        criteria_list: List of criteria with weights to multiply scores
+    """
+    # Create a mapping of criteriaId to weight
+    criteria_weights = {
+        int(c["criteriaId"]): float(c.get("weight") or 0.0)
+        for c in criteria_list
+    }
+    
     # Ensure AIExplanation is a string
     ai_explanation = result.get("AIExplanation", "")
     if isinstance(ai_explanation, dict):
@@ -157,14 +170,21 @@ def _normalize_ai_response(result: Dict[str, Any]) -> Dict[str, Any]:
     
     result["AIExplanation"] = ai_explanation
     
-    # Normalize items: force-cast criteriaId to int
+    # Normalize items: force-cast criteriaId to int and multiply score by weight
     items = result.get("items", [])
     normalized_items = []
     for item in items:
+        criteria_id = int(item.get("criteriaId", 0))
+        raw_score = float(item.get("score", 0))
+        weight = criteria_weights.get(criteria_id, 0.0)
+        
+        # Multiply score by weight before returning
+        weighted_score = round(raw_score * weight, 2)
+        
         normalized_item = {
-            "criteriaId": int(item.get("criteriaId", 0)),
+            "criteriaId": criteria_id,
             "matched": float(item.get("matched", 0.0)),
-            "score": int(item.get("score", 0)),
+            "score": weighted_score,  # Now this is score * weight
             "AINote": str(item.get("AINote", "")),
         }
         normalized_items.append(normalized_item)
@@ -173,28 +193,12 @@ def _normalize_ai_response(result: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _calculate_weighted_total_score(
-    items: List[Dict[str, Any]],
-    criteria_list: List[Dict[str, Any]]
-) -> float:
-    """Calculate weighted total score from criteria items.
+def _calculate_weighted_total_score(items: List[Dict[str, Any]]) -> float:
+    """Calculate total score by summing pre-weighted scores.
     
-    Handles weight as Decimal/float/string/null from .NET serialization.
+    Note: Items already have scores multiplied by weights in _normalize_ai_response.
     """
-    # Create a mapping of criteriaId to weight
-    # Use "or 0.0" to safely handle null values from .NET Decimal serialization
-    criteria_weights = {
-        int(c["criteriaId"]): float(c.get("weight") or 0.0)
-        for c in criteria_list
-    }
-    
-    total = 0.0
-    for item in items:
-        criteria_id = int(item.get("criteriaId", 0))
-        score = float(item.get("score", 0))
-        weight = criteria_weights.get(criteria_id, 0.0)
-        total += score * weight
-    
+    total = sum(float(item.get("score", 0)) for item in items)
     return round(total, 2)
 
 
@@ -225,19 +229,25 @@ def score_by_criteria(
     model = get_model(api_key=api_key)
     
     try:
-        response = model.generate_content(prompt)
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0,  # Deterministic scoring - same resume always gets same score
+                max_output_tokens=8192,
+            ),
+        )
         raw_text = _extract_gemini_response(response)
         result = _clean_ai_response(raw_text)
         
         # Validate response structure
         _validate_ai_response_structure(result)
         
-        # Normalize response (ensure types, cast criteriaId to int, etc.)
-        result = _normalize_ai_response(result)
+        # Normalize response (ensure types, multiply scores by weights)
+        result = _normalize_ai_response(result, criteria_list)
         
-        # Always recalculate total_score using criteria weights for accuracy
+        # Calculate total_score by summing pre-weighted scores
         items = result["items"]
-        result["total_score"] = _calculate_weighted_total_score(items, criteria_list)
+        result["total_score"] = _calculate_weighted_total_score(items)
         
         return result
     except AIScoringError:

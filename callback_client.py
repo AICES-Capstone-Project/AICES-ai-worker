@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict
 
@@ -11,28 +12,81 @@ logger = logging.getLogger(__name__)
 
 
 class CallbackClient:
-    """Wrapper around the backend HTTP APIs."""
+    """Client for sending AI results back to backend API."""
 
-    def __init__(self, base_url: str, *, timeout: float = 30.0) -> None:
+    def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        self.result_url = f"{self.base_url}/api/resume/result"  # Add this line
         self.session = requests.Session()
-        self.session.verify = False
+        logger.info("Initialized callback client with URL: %s",
+                    self.result_url)
 
     def send_ai_result(self, payload: Dict[str, Any]) -> None:
-        url = f"{self.base_url}/api/resume/result"
-        logger.info("Sending AI result payload to %s: %s", url, payload)
-        response = self.session.post(url, json=payload, timeout=self.timeout)
+        """Send AI parsing results back to backend API."""
+        logger.info("=" * 80)
+        logger.info("🚀 SENDING PAYLOAD TO BACKEND API")
+        logger.info("=" * 80)
+        # Change from self._result_url
+        logger.info("📍 Target URL: %s", self.result_url)
 
-        if response.status_code >= 400:
-            print("❌ Backend returned error:", response.text)
-            response.raise_for_status()
+        # Log full payload with pretty formatting
         try:
+            formatted_payload = json.dumps(
+                payload, indent=2, ensure_ascii=False)
+            logger.info("📦 Full Payload:\n%s", formatted_payload)
+        except Exception as e:
+            logger.warning("⚠️ Could not format payload as JSON: %s", e)
+            logger.info("📦 Raw Payload: %s", payload)
+
+        logger.info("=" * 80)
+
+        try:
+            logger.info("🔄 Making POST request...")
+            response = self.session.post(
+                # Change from self._result_url
+                self.result_url, json=payload, timeout=30, verify=False
+            )
+
+            logger.info("📡 Response Status Code: %s", response.status_code)
+
+            if response.status_code != 200:
+                logger.error("=" * 80)
+                logger.error("❌ ERROR RESPONSE FROM BACKEND")
+                logger.error("=" * 80)
+                logger.error("Status Code: %s", response.status_code)
+                logger.error("Response Headers: %s", dict(response.headers))
+                try:
+                    logger.error("Response Body:\n%s", response.text)
+                except Exception as e:
+                    logger.error("Could not read response body: %s", e)
+                logger.error("=" * 80)
+            else:
+                logger.info("✅ Successfully sent AI result")
+                try:
+                    # First 500 chars
+                    logger.info("Response Body: %s", response.text[:500])
+                except Exception:
+                    pass
+
             response.raise_for_status()
-        except requests.HTTPError as exc:
-            logger.error("Failed to send AI result for queue job %s: %s",
-                         payload.get("queueJobId"), exc)
+        except requests.exceptions.HTTPError as exc:
+            logger.error("=" * 80)
+            logger.error("💥 EXCEPTION DURING API CALL")
+            logger.error("=" * 80)
+            logger.error("Exception Type: %s", type(exc).__name__)
+            logger.error("Exception Message: %s", exc)
+            logger.error("=" * 80)
+            raise
+        except Exception as exc:
+            logger.error("=" * 80)
+            logger.error("💥 EXCEPTION DURING API CALL")
+            logger.error("=" * 80)
+            logger.error("Exception Type: %s", type(exc).__name__)
+            logger.error("Exception Message: %s", exc)
+            logger.error("=" * 80)
             raise
 
     def close(self) -> None:
-        self.session.close()
+        """Close the underlying HTTP session."""
+        self.session.close()  # Change from self._session
+        logger.info("Closed callback client session")

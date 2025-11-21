@@ -65,39 +65,49 @@ def _parse_job(raw_job: bytes) -> Dict[str, Any]:
 
 def _extract_candidate_info(parsed_resume: Dict[str, Any]) -> Dict[str, Any]:
     """Extract candidate info from parsed resume.
-    
+
     Looks for possible keys:
     - name, fullName
     - email
     - phone, phoneNumber, contact
-    
+
     Returns a dict with guaranteed fields (defaults to None).
     """
     info = parsed_resume.get("info", {})
-    
+
     # Handle case where info might be a string (JSON string)
     if isinstance(info, str):
         try:
             info = json.loads(info)
         except (json.JSONDecodeError, TypeError):
             info = {}
-    
+
     # Extract name (default None)
     full_name = None
     if isinstance(info, dict):
         full_name = info.get("fullName") or info.get("name")
-    
+
     # Extract email (default None)
     email = None
     if isinstance(info, dict):
+        # Check if email is directly in info
         email = info.get("email")
-    
+        # If not, check in contact object
+        if not email and isinstance(info.get("contact"), dict):
+            email = info["contact"].get("email")
+
     # Extract phone (default None)
     phone_number = None
     if isinstance(info, dict):
-        phone_number = info.get("phoneNumber") or info.get("phone") or info.get("contact")
-    
-    # Return with guaranteed fields (all default to None)
+        # Check direct fields first
+        phone_number = info.get("phoneNumber") or info.get("phone")
+        # If not found, check in contact object
+        if not phone_number and isinstance(info.get("contact"), dict):
+            contact = info["contact"]
+            phone_number = contact.get("phone") or contact.get(
+                "phoneNumber") or contact.get("contact")
+
+    # Return with guaranteed fields (all default to None or string type)
     return {
         "fullName": full_name,
         "email": email,
@@ -120,7 +130,7 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             job.get("jobId"),
         )
         raise ValueError("Job missing 'requirements' field")
-    
+
     if "criteria" not in job:
         logger.error(
             "Job missing 'criteria' field. Skipping job queueId=%s resumeId=%s jobId=%s",
@@ -129,10 +139,10 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             job.get("jobId"),
         )
         raise ValueError("Job missing 'criteria' field")
-    
+
     requirements = job["requirements"]
     criteria_list = job["criteria"]
-    
+
     if not requirements:
         logger.error(
             "Job 'requirements' is empty. Skipping job queueId=%s resumeId=%s jobId=%s",
@@ -141,7 +151,7 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             job.get("jobId"),
         )
         raise ValueError("Job 'requirements' is empty")
-    
+
     if not criteria_list or not isinstance(criteria_list, list):
         logger.error(
             "Job 'criteria' is empty or invalid. Skipping job queueId=%s resumeId=%s jobId=%s",
@@ -167,7 +177,7 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         parsed_resume = ats_extractor(
             resume_text, api_key=gemini_api_key or None)
         logger.info("Parsed resume sections: %s", list(parsed_resume.keys()))
-        
+
         # Score using criteria-based scoring
         scores = score_by_criteria(
             parsed_resume, requirements, criteria_list, api_key=gemini_api_key or None)
@@ -179,15 +189,15 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
 
         # Extract candidate info (guaranteed fields with None defaults)
         candidate_info = _extract_candidate_info(parsed_resume)
-        
+
         # Get AIScoreDetail from AI response items ONLY (already normalized with int criteriaId)
         ai_score_detail = scores.get("items", [])
-        
+
         # Ensure AIExplanation is a string (already normalized in scorer)
         ai_explanation = scores.get("AIExplanation", "")
         if not isinstance(ai_explanation, str):
             ai_explanation = str(ai_explanation) if ai_explanation else ""
-        
+
         # Build payload exactly as .NET expects
         payload = {
             "queueJobId": str(job["queueJobId"]),
@@ -199,6 +209,59 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             "rawJson": parsed_resume,
             "candidateInfo": candidate_info,
         }
+
+        # === DETAILED PAYLOAD VALIDATION & LOGGING ===
+        logger.info("=" * 80)
+        logger.info("🔍 PAYLOAD VALIDATION BEFORE SENDING")
+        logger.info("=" * 80)
+
+        # Log data types
+        logger.info("📊 Data Types:")
+        logger.info("  • queueJobId: %s (value: %s)", type(
+            payload["queueJobId"]).__name__, payload["queueJobId"])
+        logger.info("  • resumeId: %s (value: %s)", type(
+            payload["resumeId"]).__name__, payload["resumeId"])
+        logger.info("  • jobId: %s (value: %s)", type(
+            payload["jobId"]).__name__, payload["jobId"])
+        logger.info("  • totalResumeScore: %s (value: %s)", type(
+            payload["totalResumeScore"]).__name__, payload["totalResumeScore"])
+        logger.info("  • AIExplanation: %s (length: %s)", type(
+            payload["AIExplanation"]).__name__, len(payload["AIExplanation"]))
+        logger.info("  • AIScoreDetail: %s (count: %s)", type(
+            payload["AIScoreDetail"]).__name__, len(payload["AIScoreDetail"]))
+        logger.info("  • rawJson: %s (keys: %s)", type(payload["rawJson"]).__name__, list(
+            payload["rawJson"].keys()) if isinstance(payload["rawJson"], dict) else "N/A")
+        logger.info("  • candidateInfo: %s", type(
+            payload["candidateInfo"]).__name__)
+
+        # Log candidateInfo details
+        logger.info("👤 Candidate Info:")
+        for key, value in candidate_info.items():
+            logger.info("  • %s: %s (type: %s)", key,
+                        value, type(value).__name__)
+
+        # Validate AIScoreDetail is not empty
+        if not ai_score_detail:
+            logger.warning("⚠️ WARNING: AIScoreDetail is EMPTY!")
+        else:
+            logger.info("✅ AIScoreDetail has %s items", len(ai_score_detail))
+            # Log first item as sample
+            if ai_score_detail:
+                logger.info("📋 Sample AIScoreDetail item:")
+                sample = ai_score_detail[0]
+                logger.info("  %s", json.dumps(sample, indent=4))
+
+        # Validate score range
+        if not (0 <= payload["totalResumeScore"] <= 100):
+            logger.warning(
+                "⚠️ WARNING: totalResumeScore out of range [0-100]: %s", payload["totalResumeScore"])
+
+        # Validate AIExplanation
+        if not payload["AIExplanation"]:
+            logger.warning("⚠️ WARNING: AIExplanation is empty!")
+
+        logger.info("=" * 80)
+
         client.send_ai_result(payload)
         logger.info(
             "Submitted AI results queueId=%s resumeId=%s",

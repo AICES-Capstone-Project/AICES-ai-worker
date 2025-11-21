@@ -12,7 +12,7 @@ services:
 
   worker:
     build: . # Build from local Dockerfile
-    container_name: aices_worker
+    # container_name: aices_worker
     restart: unless-stopped
     depends_on:
       - redis # Ensure Redis is started before the worker

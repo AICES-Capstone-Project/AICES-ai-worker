@@ -23,6 +23,10 @@ class CallbackClient:
         url = f"{self.base_url}/api/resume/result"
         logger.info("Sending AI result payload to %s: %s", url, payload)
         response = self.session.post(url, json=payload, timeout=self.timeout)
+
+        if response.status_code >= 400:
+            print("❌ Backend returned error:", response.text)
+            response.raise_for_status()
         try:
             response.raise_for_status()
         except requests.HTTPError as exc:

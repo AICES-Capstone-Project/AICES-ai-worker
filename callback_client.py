@@ -16,7 +16,8 @@ class CallbackClient:
 
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip("/")
-        self.result_url = f"{self.base_url}/api/resume/result/ai"  # Add this line
+        # Add this line
+        self.result_url = f"{self.base_url}/api/resumes/result/ai"
         self.session = requests.Session()
         logger.info("Initialized callback client with URL: %s",
                     self.result_url)

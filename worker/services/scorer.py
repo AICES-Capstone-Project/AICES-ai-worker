@@ -77,6 +77,16 @@ Rules:
 - score: 0-100 relevance score
 - total_score = sum(score[i] * weight[i])
 - Do not generate markdown or comments
+- Only count experience relevant to the field stated in the criteria.
+- Never infer information not stated in the resume.
+- Never give high score unless criteria are clearly satisfied.
+- Explanation must be short and factual.
+- DO NOT count unrelated experience (e.g., software engineering ≠ graphic design).
+- If the candidate has no experience in the required field → matched = 0, score = 0.
+- If the criteria specify “>= X months/years”:
+    - Map only matching-field experience.
+    - If less than required → matched proportional, but capped (never exceed requirement level).
+    - If zero relevant experience → matched = 0.
 """.strip()
 
 
@@ -102,7 +112,7 @@ def _build_criteria_prompt(
     truncated_requirements = _truncate_requirements(requirements)
     criteria_json = json.dumps(criteria_list, ensure_ascii=False)
     resume_json = json.dumps(parsed_resume, ensure_ascii=False)
-    
+
     return (
         f"{CRITERIA_SCORING_TEMPLATE}\n\n"
         f"JOB REQUIREMENTS:\n{truncated_requirements}\n\n"
@@ -129,16 +139,16 @@ def _validate_ai_response_structure(result: Dict[str, Any]) -> None:
     """Validate that AI response has the required structure."""
     if "items" not in result:
         raise AIScoringError("Gemini response missing 'items' field")
-    
+
     items = result["items"]
     if not isinstance(items, list):
         raise AIScoringError("Gemini response 'items' must be a list")
-    
+
     required_fields = {"criteriaId", "matched", "score", "AINote"}
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
             raise AIScoringError(f"Item at index {idx} is not a dictionary")
-        
+
         missing_fields = required_fields - set(item.keys())
         if missing_fields:
             raise AIScoringError(
@@ -148,7 +158,7 @@ def _validate_ai_response_structure(result: Dict[str, Any]) -> None:
 
 def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Normalize AI response: ensure types and structure.
-    
+
     Args:
         result: AI response dict
         criteria_list: List of criteria with weights to multiply scores
@@ -158,7 +168,7 @@ def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str,
         int(c["criteriaId"]): float(c.get("weight") or 0.0)
         for c in criteria_list
     }
-    
+
     # Ensure AIExplanation is a string
     ai_explanation = result.get("AIExplanation", "")
     if isinstance(ai_explanation, dict):
@@ -167,9 +177,9 @@ def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str,
 
     elif not isinstance(ai_explanation, str):
         ai_explanation = str(ai_explanation) if ai_explanation else ""
-    
+
     result["AIExplanation"] = ai_explanation
-    
+
     # Normalize items: force-cast criteriaId to int and multiply score by weight
     items = result.get("items", [])
     normalized_items = []
@@ -177,10 +187,10 @@ def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str,
         criteria_id = int(item.get("criteriaId", 0))
         raw_score = float(item.get("score", 0))
         weight = criteria_weights.get(criteria_id, 0.0)
-        
+
         # Multiply score by weight before returning
         weighted_score = round(raw_score * weight, 2)
-        
+
         normalized_item = {
             "criteriaId": criteria_id,
             "matched": float(item.get("matched", 0.0)),
@@ -188,14 +198,14 @@ def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str,
             "AINote": str(item.get("AINote", "")),
         }
         normalized_items.append(normalized_item)
-    
+
     result["items"] = normalized_items
     return result
 
 
 def _calculate_weighted_total_score(items: List[Dict[str, Any]]) -> float:
     """Calculate total score by summing pre-weighted scores.
-    
+
     Note: Items already have scores multiplied by weights in _normalize_ai_response.
     """
     total = sum(float(item.get("score", 0)) for item in items)
@@ -210,13 +220,13 @@ def score_by_criteria(
     api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Score the resume based on criteria list using Gemini.
-    
+
     Args:
         parsed_resume: The parsed resume JSON
         requirements: The job requirements text
         criteria_list: List of criteria dicts with criteriaId, name, weight
         api_key: Optional Gemini API key
-        
+
     Returns:
         Dict with AIExplanation, items (AIScoreDetail), and total_score
     """
@@ -224,10 +234,10 @@ def score_by_criteria(
         raise ValueError("Job requirements are required for scoring")
     if not criteria_list:
         raise ValueError("Criteria list is required for scoring")
-    
+
     prompt = _build_criteria_prompt(parsed_resume, requirements, criteria_list)
     model = get_model(api_key=api_key)
-    
+
     try:
         response = model.generate_content(
             prompt,
@@ -238,17 +248,17 @@ def score_by_criteria(
         )
         raw_text = _extract_gemini_response(response)
         result = _clean_ai_response(raw_text)
-        
+
         # Validate response structure
         _validate_ai_response_structure(result)
-        
+
         # Normalize response (ensure types, multiply scores by weights)
         result = _normalize_ai_response(result, criteria_list)
-        
+
         # Calculate total_score by summing pre-weighted scores
         items = result["items"]
         result["total_score"] = _calculate_weighted_total_score(items)
-        
+
         return result
     except AIScoringError:
         raise

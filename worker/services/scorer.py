@@ -60,13 +60,13 @@ For each criteria:
 
 Return ONLY valid JSON with this format:
 {
-  "AIExplanation": "<overall explanation text>",
+  "AIExplanation": "<overall explanation text in the same language as REQUIREMENTS>",
   "items": [
     {
       "criteriaId": <number>,
       "matched": <float 0-1>,
       "score": <0-100>,
-      "AINote": "<short explanation>"
+      "AINote": "<short explanation in the same language as the CRITERIA>"
     }
   ],
   "total_score": <0-100>

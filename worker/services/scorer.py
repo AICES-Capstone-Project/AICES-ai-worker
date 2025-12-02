@@ -264,3 +264,255 @@ def score_by_criteria(
         raise
     except Exception as exc:
         raise AIScoringError("Failed to score resume with Gemini") from exc
+
+
+# ============================================================================
+# ADVANCED SCORING (for rescore mode)
+# ============================================================================
+
+ADVANCED_SCORING_TEMPLATE = """
+You are an EXPERT AI resume evaluator performing ADVANCED ANALYSIS.
+This is a RE-SCORING request - the resume has already been parsed.
+Perform DEEPER, MORE THOROUGH analysis than a standard first-pass evaluation.
+
+⚠️ CRITICAL LANGUAGE RULE (MUST FOLLOW):
+- Detect the language of JOB REQUIREMENTS section below
+- ALL your output text (AIExplanation, AINote) MUST be written in THAT SAME LANGUAGE
+- If REQUIREMENTS is in Japanese → output in Japanese
+- If REQUIREMENTS is in Vietnamese → output in Vietnamese
+- If REQUIREMENTS is in English → output in English
+- This rule is MANDATORY. Do NOT output in English if REQUIREMENTS is in another language.
+
+You will receive:
+1. The parsed resume JSON (already extracted data)
+2. The job requirements text (DETECT ITS LANGUAGE FOR YOUR OUTPUT)
+3. A list of scoring criteria with weights
+
+For each criteria:
+{
+    "criteriaId": <number>,
+    "name": "<criteria description>",
+    "weight": <0-1>
+}
+
+Return ONLY valid JSON with this format:
+{
+  "AIExplanation": "<comprehensive analysis - MUST USE SAME LANGUAGE AS JOB REQUIREMENTS>",
+  "items": [
+    {
+      "criteriaId": <number>,
+      "matched": <float 0-1>,
+      "score": <0-100>,
+      "AINote": "<detailed explanation - MUST USE SAME LANGUAGE AS CRITERIA NAME>"
+    }
+  ],
+  "total_score": <0-100>
+}
+
+ADVANCED ANALYSIS RULES:
+- matched: 0.0 to 1.0 (precise similarity measurement)
+- score: 0-100 (detailed relevance score)
+- total_score = sum(score[i] * weight[i])
+
+══════════════════════════════════════════════════════════════
+DEEP ANALYSIS GUIDELINES (What makes this ADVANCED scoring)
+══════════════════════════════════════════════════════════════
+
+1. EXPERIENCE DEPTH ANALYSIS:
+   - Calculate TOTAL years in the relevant field (sum all related positions)
+   - Count ONLY experience directly relevant to the criteria field
+   - Software engineering ≠ graphic design ≠ marketing ≠ sales
+   - Junior roles ≠ Senior roles (weigh leadership/complexity differently)
+   - Internships count as 0.5x weight unless full-time equivalent
+   - Recent experience (last 2-3 years) weighs MORE than older experience
+
+2. CAREER PROGRESSION ANALYSIS (BONUS/PENALTY):
+   + POSITIVE: Clear upward trajectory (Junior → Mid → Senior → Lead)
+   + POSITIVE: Increasing responsibilities over time
+   + POSITIVE: Promotions within same company
+   - NEGATIVE: Lateral moves without growth
+   - NEGATIVE: Downward trajectory (Senior → Junior roles)
+   - NEGATIVE: Stuck at same level for 5+ years
+
+3. EMPLOYMENT STABILITY ANALYSIS:
+   ✓ STABLE: Average tenure 2+ years per company
+   ⚠ CAUTION: Average tenure 1-2 years (may be job hopper)
+   ✗ UNSTABLE: Average tenure <1 year (red flag)
+   
+   Calculate: Total work years / Number of companies = Average tenure
+   
+   Employment Gaps Analysis:
+   - Gap < 3 months: Normal (ignore)
+   - Gap 3-6 months: Note but don't penalize heavily
+   - Gap 6-12 months: Significant, reduce score if unexplained
+   - Gap > 1 year: Major concern, significant score reduction
+
+4. SKILLS MATCHING (STRICT):
+   - Required skills must be EXPLICITLY mentioned in resume
+   - Skill proficiency levels matter:
+     * "Familiar with" = 0.3x weight
+     * "Proficient" = 0.7x weight  
+     * "Expert/Advanced" = 1.0x weight
+   - Consider recency: skills from 5+ years ago may be outdated
+   - Tech skills depreciate faster than soft skills
+
+5. EDUCATION & CERTIFICATIONS:
+   - Verify degree level matches requirements
+   - Consider field relevance (CS degree vs unrelated field)
+   - Certifications add value only if current/relevant
+   - Prestigious universities = slight bonus (not major factor)
+
+6. QUALITY INDICATORS (BOOST SCORE):
+   + Quantified achievements (%, $, metrics, team size)
+   + Leadership experience (managed X people, led Y projects)
+   + Impact statements (improved by X%, saved $Y, reduced Z%)
+   + Awards, recognition, publications
+   + Open source contributions, side projects
+   + Speaking engagements, community involvement
+
+7. RED FLAGS (REDUCE SCORE):
+   - Employment gaps > 6 months without explanation
+   - Frequent job changes (<1 year average)
+   - Vague descriptions without specifics
+   - Missing key required skills
+   - No quantified achievements in senior roles
+   - Inconsistent job titles vs responsibilities
+   - Resume gaps or unexplained periods
+   - Only listing responsibilities, no achievements
+
+8. COMPANY QUALITY CONTEXT:
+   - Experience at well-known companies = slight positive signal
+   - Startup experience = shows adaptability, risk-taking
+   - Enterprise experience = shows process, scale handling
+   - Consider company size context for responsibilities
+
+9. SOFT SKILLS INFERENCE (from experience):
+   - Multiple team mentions → teamwork
+   - Client-facing roles → communication
+   - Cross-functional projects → collaboration
+   - Mentoring/training others → leadership potential
+
+══════════════════════════════════════════════════════════════
+OUTPUT REQUIREMENTS
+══════════════════════════════════════════════════════════════
+
+AIExplanation MUST be DETAILED (200-400 words) and include ALL of these sections:
+
+1. 📊 OVERALL FIT ASSESSMENT
+   - How well does candidate match the job? (Poor/Fair/Good/Excellent)
+   - Overall recommendation (Recommend/Consider/Not Recommend)
+
+2. ✅ KEY STRENGTHS (list 3-5 points)
+   - What makes this candidate stand out?
+   - Relevant skills and experience highlights
+   - Notable achievements
+
+3. ⚠️ KEY CONCERNS/GAPS (list 2-4 points)
+   - Missing requirements or skills
+   - Experience gaps or weaknesses
+   - Red flags identified
+
+4. 📈 CAREER TRAJECTORY SUMMARY
+   - Career progression pattern (growing/stable/declining)
+   - Total relevant experience duration
+   - Job stability assessment (stable/moderate/unstable)
+
+5. 💡 FINAL VERDICT
+   - One paragraph summary of candidate suitability
+   - What role level they're best suited for (junior/mid/senior)
+
+(ALL CONTENT MUST BE IN THE SAME LANGUAGE AS JOB REQUIREMENTS!)
+
+AINote per criteria MUST include:
+- Specific evidence from resume (quote or cite)
+- Why this score was given (factual reasoning)
+- Any concerns for this specific criteria
+(ALL IN THE SAME LANGUAGE AS CRITERIA NAME!)
+
+STRICT RULES:
+- Be factual - cite specific resume content
+- Never infer unstated information
+- Never give high scores without clear evidence
+- Be HARSHER than basic scoring - this is ADVANCED analysis
+- AIExplanation should be comprehensive, not brief
+""".strip()
+
+
+def _build_advanced_prompt(
+    parsed_resume: Dict[str, Any],
+    requirements: str,
+    criteria_list: List[Dict[str, Any]]
+) -> str:
+    """Build the AI prompt for advanced criteria-based scoring."""
+    truncated_requirements = _truncate_requirements(requirements)
+    criteria_json = json.dumps(criteria_list, ensure_ascii=False)
+    resume_json = json.dumps(parsed_resume, ensure_ascii=False)
+
+    return (
+        f"{ADVANCED_SCORING_TEMPLATE}\n\n"
+        f"JOB REQUIREMENTS:\n{truncated_requirements}\n\n"
+        f"SCORING CRITERIA:\n{criteria_json}\n\n"
+        f"CANDIDATE RESUME DATA (PRE-PARSED):\n{resume_json}"
+    )
+
+
+def score_by_criteria_advanced(
+    parsed_resume: Dict[str, Any],
+    requirements: str,
+    criteria_list: List[Dict[str, Any]],
+    *,
+    api_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Advanced scoring for rescore mode - deeper analysis without re-parsing.
+
+    This function performs more thorough evaluation with stricter criteria
+    and more detailed explanations. Used when user requests re-scoring
+    of an already-parsed resume.
+
+    Args:
+        parsed_resume: The pre-parsed resume JSON (from database)
+        requirements: The job requirements text
+        criteria_list: List of criteria dicts with criteriaId, name, weight
+        api_key: Optional Gemini API key
+
+    Returns:
+        Dict with AIExplanation, items (AIScoreDetail), and total_score
+    """
+    if not requirements:
+        raise ValueError("Job requirements are required for scoring")
+    if not criteria_list:
+        raise ValueError("Criteria list is required for scoring")
+    if not parsed_resume:
+        raise ValueError("Parsed resume data is required for advanced scoring")
+
+    logger.info("Starting advanced scoring (rescore mode)")
+    prompt = _build_advanced_prompt(parsed_resume, requirements, criteria_list)
+    model = get_model(api_key=api_key)
+
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.7,  # Deterministic scoring
+                max_output_tokens=8192,
+            ),
+        )
+        raw_text = _extract_gemini_response(response)
+        result = _clean_ai_response(raw_text)
+
+        # Validate response structure
+        _validate_ai_response_structure(result)
+
+        # Normalize response (ensure types, multiply scores by weights)
+        result = _normalize_ai_response(result, criteria_list)
+
+        # Calculate total_score by summing pre-weighted scores
+        items = result["items"]
+        result["total_score"] = _calculate_weighted_total_score(items)
+
+        logger.info("Advanced scoring completed (total_score=%s)", result["total_score"])
+        return result
+    except AIScoringError:
+        raise
+    except Exception as exc:
+        raise AIScoringError("Failed to perform advanced scoring with Gemini") from exc

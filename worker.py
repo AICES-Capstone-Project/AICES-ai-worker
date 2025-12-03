@@ -112,6 +112,8 @@ def _extract_candidate_info(parsed_resume: Dict[str, Any]) -> Dict[str, Any]:
         "fullName": full_name,
         "email": email,
         "phoneNumber": phone_number,
+        "matchSkills": None,  # Will be populated from AI scoring
+        "missingSkills": None,  # Will be populated from AI scoring
     }
 
 
@@ -257,6 +259,10 @@ def _send_result_payload(
     """Build and send the result payload to backend."""
     # Get AIScoreDetail from AI response items ONLY (already normalized with int criteriaId)
     ai_score_detail = scores.get("items", [])
+
+    # Merge matchSkills and missingSkills from AI scoring into candidate_info
+    candidate_info["matchSkills"] = scores.get("matchSkills")
+    candidate_info["missingSkills"] = scores.get("missingSkills")
 
     # Ensure AIExplanation is a string (already normalized in scorer)
     ai_explanation = scores.get("AIExplanation", "")

@@ -69,13 +69,17 @@ Return ONLY valid JSON with this format:
       "AINote": "<short explanation in the same language as the CRITERIA>"
     }
   ],
-  "total_score": <0-100>
+  "total_score": <0-100>,
+  "matchSkills": "<comma-separated list of skills from resume that match job requirements>",
+  "missingSkills": "<comma-separated list of required skills NOT found in resume>"
 }
 
 Rules:
 - matched: 0.0 to 1.0 similarity
 - score: 0-100 relevance score
 - total_score = sum(score[i] * weight[i])
+- matchSkills: List skills from resume that match the job requirements (e.g., "Python, JavaScript, SQL")
+- missingSkills: List required skills NOT found in resume (e.g., "Docker, Kubernetes, AWS")
 - Do not generate markdown or comments
 - Only count experience relevant to the field stated in the criteria.
 - Never infer information not stated in the resume.
@@ -200,6 +204,18 @@ def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str,
         normalized_items.append(normalized_item)
 
     result["items"] = normalized_items
+
+    # Normalize matchSkills and missingSkills (ensure they are strings or None)
+    match_skills = result.get("matchSkills")
+    if match_skills is not None and not isinstance(match_skills, str):
+        match_skills = str(match_skills)
+    result["matchSkills"] = match_skills
+
+    missing_skills = result.get("missingSkills")
+    if missing_skills is not None and not isinstance(missing_skills, str):
+        missing_skills = str(missing_skills)
+    result["missingSkills"] = missing_skills
+
     return result
 
 
@@ -306,13 +322,17 @@ Return ONLY valid JSON with this format:
       "AINote": "<detailed explanation - MUST USE SAME LANGUAGE AS CRITERIA NAME>"
     }
   ],
-  "total_score": <0-100>
+  "total_score": <0-100>,
+  "matchSkills": "<comma-separated list of skills from resume that match job requirements>",
+  "missingSkills": "<comma-separated list of required skills NOT found in resume>"
 }
 
 ADVANCED ANALYSIS RULES:
 - matched: 0.0 to 1.0 (precise similarity measurement)
 - score: 0-100 (detailed relevance score)
 - total_score = sum(score[i] * weight[i])
+- matchSkills: Comma-separated list of skills from resume that match the job requirements
+- missingSkills: Comma-separated list of required skills NOT found in resume
 
 ══════════════════════════════════════════════════════════════
 DEEP ANALYSIS GUIDELINES (What makes this ADVANCED scoring)

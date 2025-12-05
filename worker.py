@@ -117,6 +117,84 @@ def _extract_candidate_info(parsed_resume: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = None) -> bool:
+    """Lightweight validation to detect non-resume uploads."""
+
+    if resume_text is not None and len(resume_text.strip()) < 50:
+        # Almost no text extracted; likely not a resume
+        return False
+
+    if not isinstance(parsed_resume, dict):
+        return False
+
+    info = parsed_resume.get("info") or {}
+    if isinstance(info, str):
+        try:
+            info = json.loads(info)
+        except (TypeError, json.JSONDecodeError):
+            info = {}
+
+    has_basic_info = False
+    if isinstance(info, dict):
+        has_basic_info = any(
+            info.get(key)
+            for key in ("fullName", "name", "email", "phone",
+                        "phoneNumber", "location")
+        )
+
+    def _list_has_content(value: Any) -> bool:
+        return bool(value and any(bool(item) for item in value))
+
+    has_experience = _list_has_content(parsed_resume.get("work_experience"))
+    has_education = _list_has_content(parsed_resume.get("education"))
+    has_projects = _list_has_content(parsed_resume.get("projects"))
+    has_certifications = _list_has_content(parsed_resume.get("certifications"))
+    has_languages = _list_has_content(parsed_resume.get("languages_and_skills"))
+
+    tech_skills = parsed_resume.get("technical_skills")
+    has_skills = False
+    if isinstance(tech_skills, dict):
+        has_skills = any(
+            bool(value)
+            for value in tech_skills.values()
+            if value is not None
+        )
+
+    has_summary = bool(parsed_resume.get("summary"))
+    has_experience_years = float(parsed_resume.get(
+        "total_experience_years") or 0) > 0
+
+    return any([
+        has_basic_info,
+        has_experience,
+        has_education,
+        has_projects,
+        has_certifications,
+        has_languages,
+        has_skills,
+        has_summary,
+        has_experience_years,
+    ])
+
+
+def _send_invalid_resume_payload(job: Dict[str, Any], client: CallbackClient) -> None:
+    """Send a minimal payload indicating the file is not a resume."""
+    payload = {
+        "queueJobId": str(job["queueJobId"]),
+        "resumeId": int(job["resumeId"]),
+        "jobId": int(job["jobId"]),
+        "error": "not_a_resume",
+    }
+
+    logger.warning(
+        "Detected invalid resume upload. Sending error payload queueId=%s resumeId=%s jobId=%s",
+        job["queueJobId"],
+        job["resumeId"],
+        job["jobId"],
+    )
+    client.send_ai_result(payload)
+
+
 def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: str) -> None:
     # Get mode from job payload (default to "parse" for backward compatibility)
     mode = job.get("mode", "parse")
@@ -229,6 +307,10 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         parsed_resume = ats_extractor(
             resume_text, api_key=gemini_api_key or None)
         logger.info("Parsed resume sections: %s", list(parsed_resume.keys()))
+
+        if not _looks_like_resume(parsed_resume, resume_text):
+            _send_invalid_resume_payload(job, client)
+            return
 
         # Score using standard criteria-based scoring
         scores = score_by_criteria(

@@ -117,11 +117,96 @@ def _extract_candidate_info(parsed_resume: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = None) -> bool:
-    """Lightweight validation to detect non-resume uploads."""
+def _validate_resume_with_ai(resume_text: str, parsed_resume: Dict[str, Any], api_key: str | None = None) -> bool:
+    """Use AI to validate if the document is actually a resume."""
+    try:
+        from worker.services.gemini_client import get_model
+        import google.generativeai as genai
+        
+        model = get_model(api_key=api_key)
+        
+        # Create a compact summary of parsed data for AI validation
+        parsed_summary = {
+            "has_work_experience": bool(parsed_resume.get("work_experience")),
+            "has_education": bool(parsed_resume.get("education")),
+            "has_skills": bool(parsed_resume.get("technical_skills")),
+            "has_basic_info": bool(parsed_resume.get("info", {}).get("fullName") or 
+                                   parsed_resume.get("info", {}).get("email")),
+            "text_length": len(resume_text),
+        }
+        
+        validation_prompt = f"""You are a document classifier. Determine if the following document is a RESUME/CV or NOT a resume.
+
+Document text (first 2000 chars): {resume_text[:2000]}
+
+Parsed structure summary: {json.dumps(parsed_summary, ensure_ascii=False)}
+
+Respond with ONLY a JSON object:
+{{
+    "is_resume": true or false,
+    "reason": "brief explanation"
+}}
+
+A resume/CV should contain:
+- Professional work experience OR education history
+- Contact information (name, email, phone)
+- Skills, certifications, or projects related to professional qualifications
+
+A novel, story, article, or other non-resume document should return false."""
+
+        response = model.generate_content(
+            validation_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0,
+                max_output_tokens=512,
+            ),
+        )
+        
+        # Extract response text
+        if hasattr(response, "parts") and response.parts:
+            raw_text = "".join(part.text for part in response.parts if getattr(part, "text", "")).strip()
+        elif response.candidates:
+            candidate = response.candidates[0]
+            if candidate.content and candidate.content.parts:
+                raw_text = "".join(part.text for part in candidate.content.parts if getattr(part, "text", "")).strip()
+            else:
+                logger.warning("AI validation returned empty response, defaulting to False")
+                return False
+        else:
+            logger.warning("AI validation returned empty response, defaulting to False")
+            return False
+        
+        # Clean and parse JSON response
+        cleaned = raw_text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        try:
+            result = json.loads(cleaned)
+            is_resume = result.get("is_resume", False)
+            reason = result.get("reason", "")
+            logger.info("AI validation result: is_resume=%s, reason=%s", is_resume, reason)
+            return bool(is_resume)
+        except json.JSONDecodeError:
+            logger.warning("AI validation returned invalid JSON, defaulting to False")
+            return False
+            
+    except Exception as exc:
+        logger.warning("AI validation failed: %s, falling back to rule-based validation", exc)
+        return None  # Signal to fall back to rule-based validation
+
+
+def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = None, gemini_api_key: str | None = None) -> bool:
+    """Validate if document is actually a resume using AI and rule-based checks."""
 
     if resume_text is not None and len(resume_text.strip()) < 50:
         # Almost no text extracted; likely not a resume
+        logger.info("Resume text too short (%d chars), not a resume", len(resume_text.strip()))
         return False
 
     if not isinstance(parsed_resume, dict):
@@ -134,47 +219,75 @@ def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = 
         except (TypeError, json.JSONDecodeError):
             info = {}
 
+    # Check basic contact info
     has_basic_info = False
     if isinstance(info, dict):
-        has_basic_info = any(
-            info.get(key)
-            for key in ("fullName", "name", "email", "phone",
-                        "phoneNumber", "location")
-        )
+        has_name = bool(info.get("fullName") or info.get("name"))
+        has_email = bool(info.get("email"))
+        has_phone = bool(info.get("phone") or info.get("phoneNumber"))
+        has_basic_info = has_name or (has_email and has_phone)
 
     def _list_has_content(value: Any) -> bool:
-        return bool(value and any(bool(item) for item in value))
+        if not value:
+            return False
+        if not isinstance(value, list):
+            return False
+        # Check if list has at least one item with actual content
+        for item in value:
+            if isinstance(item, dict):
+                # Check if dict has at least one non-empty string value
+                if any(v for v in item.values() if isinstance(v, str) and v.strip()):
+                    return True
+            elif isinstance(item, str) and item.strip():
+                return True
+        return False
 
     has_experience = _list_has_content(parsed_resume.get("work_experience"))
     has_education = _list_has_content(parsed_resume.get("education"))
-    has_projects = _list_has_content(parsed_resume.get("projects"))
-    has_certifications = _list_has_content(parsed_resume.get("certifications"))
-    has_languages = _list_has_content(parsed_resume.get("languages_and_skills"))
-
+    
     tech_skills = parsed_resume.get("technical_skills")
     has_skills = False
     if isinstance(tech_skills, dict):
         has_skills = any(
-            bool(value)
+            bool(value) and isinstance(value, list) and len(value) > 0
             for value in tech_skills.values()
             if value is not None
         )
 
-    has_summary = bool(parsed_resume.get("summary"))
-    has_experience_years = float(parsed_resume.get(
-        "total_experience_years") or 0) > 0
-
-    return any([
-        has_basic_info,
-        has_experience,
-        has_education,
-        has_projects,
-        has_certifications,
-        has_languages,
-        has_skills,
-        has_summary,
-        has_experience_years,
-    ])
+    # STRICT VALIDATION: Must have at least 2 of the 3 critical fields
+    critical_fields_count = sum([has_experience, has_education, has_skills])
+    
+    # Rule 1: Must have at least 2 critical fields (experience, education, or skills)
+    if critical_fields_count < 2:
+        logger.info(
+            "Resume validation failed: only %d critical fields found (need 2+). "
+            "has_experience=%s, has_education=%s, has_skills=%s",
+            critical_fields_count, has_experience, has_education, has_skills
+        )
+        
+        # Rule 2: Fallback - if has basic info AND at least 1 critical field, might be valid
+        if has_basic_info and critical_fields_count >= 1:
+            logger.info("Has basic info + 1 critical field, using AI validation")
+            # Use AI validation as tie-breaker
+            if resume_text and gemini_api_key:
+                ai_result = _validate_resume_with_ai(resume_text, parsed_resume, gemini_api_key)
+                if ai_result is not None:
+                    return ai_result
+            # If AI validation fails or not available, reject
+            return False
+        else:
+            return False
+    
+    # If we have 2+ critical fields, use AI validation to double-check
+    # (in case it's a novel that happens to have some structured data)
+    if resume_text and gemini_api_key and len(resume_text) > 200:
+        ai_result = _validate_resume_with_ai(resume_text, parsed_resume, gemini_api_key)
+        if ai_result is not None:
+            return ai_result
+    
+    # If we get here, rule-based validation passed
+    logger.info("Resume validation passed: has %d critical fields", critical_fields_count)
+    return True
 
 
 def _send_invalid_resume_payload(job: Dict[str, Any], client: CallbackClient) -> None:
@@ -308,7 +421,7 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             resume_text, api_key=gemini_api_key or None)
         logger.info("Parsed resume sections: %s", list(parsed_resume.keys()))
 
-        if not _looks_like_resume(parsed_resume, resume_text):
+        if not _looks_like_resume(parsed_resume, resume_text, gemini_api_key):
             _send_invalid_resume_payload(job, client)
             return
 

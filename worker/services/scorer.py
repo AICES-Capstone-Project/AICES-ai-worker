@@ -170,19 +170,46 @@ def _truncate_requirements(requirements: str, max_length: int = MAX_REQUIREMENTS
     return requirements[:max_length]
 
 
+def _build_job_context_section(
+    skills: Optional[str] = None,
+    specialization: Optional[str] = None,
+    employment_types: Optional[str] = None
+) -> str:
+    """Build job context section for the prompt."""
+    context_parts = []
+    
+    if specialization:
+        context_parts.append(f"• Job Specialization/Field: {specialization}")
+    if skills:
+        context_parts.append(f"• Required Skills: {skills}")
+    if employment_types:
+        context_parts.append(f"• Employment Type: {employment_types}")
+    
+    if context_parts:
+        return "JOB CONTEXT:\n" + "\n".join(context_parts) + "\n\n"
+    return ""
+
+
 def _build_criteria_prompt(
     parsed_resume: Dict[str, Any],
     requirements: str,
-    criteria_list: List[Dict[str, Any]]
+    criteria_list: List[Dict[str, Any]],
+    skills: Optional[str] = None,
+    specialization: Optional[str] = None,
+    employment_types: Optional[str] = None
 ) -> str:
     """Build the AI prompt for criteria-based scoring."""
     # Truncate requirements to prevent token limit issues
     truncated_requirements = _truncate_requirements(requirements)
     criteria_json = json.dumps(criteria_list, ensure_ascii=False)
     resume_json = json.dumps(parsed_resume, ensure_ascii=False)
+    
+    # Build job context section
+    job_context = _build_job_context_section(skills, specialization, employment_types)
 
     return (
         f"{CRITERIA_SCORING_TEMPLATE}\n\n"
+        f"{job_context}"
         f"JOB REQUIREMENTS:\n{truncated_requirements}\n\n"
         f"SCORING CRITERIA:\n{criteria_json}\n\n"
         f"CANDIDATE RESUME DATA:\n{resume_json}"
@@ -324,6 +351,9 @@ def score_by_criteria(
     criteria_list: List[Dict[str, Any]],
     *,
     api_key: Optional[str] = None,
+    skills: Optional[str] = None,
+    specialization: Optional[str] = None,
+    employment_types: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Score the resume based on criteria list using Gemini.
 
@@ -332,6 +362,9 @@ def score_by_criteria(
         requirements: The job requirements text
         criteria_list: List of criteria dicts with criteriaId, name, weight
         api_key: Optional Gemini API key
+        skills: Optional comma-separated list of required skills
+        specialization: Optional job specialization/field name
+        employment_types: Optional comma-separated list of employment types
 
     Returns:
         Dict with AIExplanation, items (AIScoreDetail), and total_score
@@ -341,7 +374,10 @@ def score_by_criteria(
     if not criteria_list:
         raise ValueError("Criteria list is required for scoring")
 
-    prompt = _build_criteria_prompt(parsed_resume, requirements, criteria_list)
+    prompt = _build_criteria_prompt(
+        parsed_resume, requirements, criteria_list,
+        skills=skills, specialization=specialization, employment_types=employment_types
+    )
     model = get_model(api_key=api_key)
 
     try:
@@ -534,15 +570,22 @@ STRICT RULES:
 def _build_advanced_prompt(
     parsed_resume: Dict[str, Any],
     requirements: str,
-    criteria_list: List[Dict[str, Any]]
+    criteria_list: List[Dict[str, Any]],
+    skills: Optional[str] = None,
+    specialization: Optional[str] = None,
+    employment_types: Optional[str] = None
 ) -> str:
     """Build the AI prompt for advanced criteria-based scoring."""
     truncated_requirements = _truncate_requirements(requirements)
     criteria_json = json.dumps(criteria_list, ensure_ascii=False)
     resume_json = json.dumps(parsed_resume, ensure_ascii=False)
+    
+    # Build job context section
+    job_context = _build_job_context_section(skills, specialization, employment_types)
 
     return (
         f"{ADVANCED_SCORING_TEMPLATE}\n\n"
+        f"{job_context}"
         f"JOB REQUIREMENTS:\n{truncated_requirements}\n\n"
         f"SCORING CRITERIA:\n{criteria_json}\n\n"
         f"CANDIDATE RESUME DATA (PRE-PARSED):\n{resume_json}"
@@ -555,6 +598,9 @@ def score_by_criteria_advanced(
     criteria_list: List[Dict[str, Any]],
     *,
     api_key: Optional[str] = None,
+    skills: Optional[str] = None,
+    specialization: Optional[str] = None,
+    employment_types: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Advanced scoring for rescore mode - deeper analysis without re-parsing.
 
@@ -567,6 +613,9 @@ def score_by_criteria_advanced(
         requirements: The job requirements text
         criteria_list: List of criteria dicts with criteriaId, name, weight
         api_key: Optional Gemini API key
+        skills: Optional comma-separated list of required skills
+        specialization: Optional job specialization/field name
+        employment_types: Optional comma-separated list of employment types
 
     Returns:
         Dict with AIExplanation, items (AIScoreDetail), and total_score
@@ -579,7 +628,10 @@ def score_by_criteria_advanced(
         raise ValueError("Parsed resume data is required for advanced scoring")
 
     logger.info("Starting advanced scoring (rescore mode)")
-    prompt = _build_advanced_prompt(parsed_resume, requirements, criteria_list)
+    prompt = _build_advanced_prompt(
+        parsed_resume, requirements, criteria_list,
+        skills=skills, specialization=specialization, employment_types=employment_types
+    )
     model = get_model(api_key=api_key)
 
     try:

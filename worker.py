@@ -290,17 +290,107 @@ def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = 
     return True
 
 
-def _send_invalid_resume_payload(job: Dict[str, Any], client: CallbackClient) -> None:
-    """Send a minimal payload indicating the file is not a resume."""
+def _validate_job_requirements_with_ai(requirements: str, criteria_list: list, api_key: str | None = None) -> bool:
+    """Use AI to validate if requirements and criteria are meaningful job descriptions."""
+    try:
+        from worker.services.gemini_client import get_model
+        import google.generativeai as genai
+        
+        model = get_model(api_key=api_key)
+        
+        # Build criteria text for validation
+        criteria_text = ""
+        if criteria_list:
+            criteria_names = [c.get("name", "") for c in criteria_list if isinstance(c, dict)]
+            criteria_text = ", ".join(criteria_names)
+        
+        validation_prompt = f"""You are a job posting validator. Determine if the following job requirements and criteria are MEANINGFUL and VALID for recruitment purposes.
+
+Job Requirements (first 1000 chars):
+{requirements[:1000]}
+
+Criteria Names:
+{criteria_text[:500]}
+
+Respond with ONLY a JSON object:
+{{
+    "is_valid": true or false,
+    "reason": "brief explanation"
+}}
+
+VALID job requirements should:
+- Describe actual job responsibilities, skills needed, or qualifications
+- Be written in a coherent, professional manner
+- Make sense as part of a real job posting
+
+INVALID job requirements (return false):
+- Random/gibberish text like "jkjfsalhfsfsjfsjflsfjj" or "asdfasdf"
+- Repeated meaningless words like "requirement requirement requirement"
+- Text that doesn't describe any actual job duties or qualifications
+- Lorem ipsum or placeholder text
+- Nonsensical combinations of characters
+
+Be STRICT: If the text looks like random typing, testing, or placeholder content, return false."""
+
+        response = model.generate_content(
+            validation_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0,
+                max_output_tokens=256,
+            ),
+        )
+        
+        # Extract response text
+        if hasattr(response, "parts") and response.parts:
+            raw_text = "".join(part.text for part in response.parts if getattr(part, "text", "")).strip()
+        elif response.candidates:
+            candidate = response.candidates[0]
+            if candidate.content and candidate.content.parts:
+                raw_text = "".join(part.text for part in candidate.content.parts if getattr(part, "text", "")).strip()
+            else:
+                logger.warning("AI job validation returned empty response, defaulting to True")
+                return True
+        else:
+            logger.warning("AI job validation returned empty response, defaulting to True")
+            return True
+        
+        # Clean and parse JSON response
+        cleaned = raw_text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        
+        try:
+            result = json.loads(cleaned)
+            is_valid = result.get("is_valid", True)
+            reason = result.get("reason", "")
+            logger.info("AI job requirements validation: is_valid=%s, reason=%s", is_valid, reason)
+            return bool(is_valid)
+        except json.JSONDecodeError:
+            logger.warning("AI job validation returned invalid JSON, defaulting to True")
+            return True
+            
+    except Exception as exc:
+        logger.warning("AI job requirements validation failed: %s, defaulting to True", exc)
+        return True
+
+
+def _send_invalid_resume_payload(job: Dict[str, Any], client: CallbackClient, error_type: str = "not_a_resume") -> None:
+    """Send a minimal payload indicating an invalid upload or job data."""
     payload = {
         "queueJobId": str(job["queueJobId"]),
         "resumeId": int(job["resumeId"]),
         "jobId": int(job["jobId"]),
-        "error": "not_a_resume",
+        "error": error_type,
     }
 
     logger.warning(
-        "Detected invalid resume upload. Sending error payload queueId=%s resumeId=%s jobId=%s",
+        "Detected invalid data (error=%s). Sending error payload queueId=%s resumeId=%s jobId=%s",
+        error_type,
         job["queueJobId"],
         job["resumeId"],
         job["jobId"],
@@ -362,6 +452,11 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         )
         raise ValueError("Job 'criteria' is empty or invalid")
 
+    # Extract optional job context fields (new fields from backend)
+    job_skills = job.get("skills")  # comma-separated skills list
+    job_specialization = job.get("specialization")  # job field/specialization name
+    job_employment_types = job.get("employmentTypes")  # comma-separated employment types
+
     logger.info(
         "Starting job queueId=%s resumeId=%s jobId=%s mode=%s",
         job["queueJobId"],
@@ -369,6 +464,26 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         job["jobId"],
         mode,
     )
+    if job_skills or job_specialization or job_employment_types:
+        logger.info(
+            "Job context: skills=%s, specialization=%s, employmentTypes=%s",
+            job_skills[:50] if job_skills else None,
+            job_specialization,
+            job_employment_types,
+        )
+
+    # =========================================================================
+    # VALIDATE JOB REQUIREMENTS AND CRITERIA ARE MEANINGFUL
+    # =========================================================================
+    if not _validate_job_requirements_with_ai(requirements, criteria_list, gemini_api_key):
+        logger.warning(
+            "Invalid/meaningless job requirements detected for queueId=%s resumeId=%s jobId=%s",
+            job["queueJobId"],
+            job["resumeId"],
+            job["jobId"],
+        )
+        _send_invalid_resume_payload(job, client, "not_a_resume")
+        return
 
     # =========================================================================
     # MODE: RESCORE - Use existing parsed data, advanced scoring only
@@ -392,7 +507,12 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         
         # Score using ADVANCED criteria-based scoring
         scores = score_by_criteria_advanced(
-            parsed_resume, requirements, criteria_list, api_key=gemini_api_key or None)
+            parsed_resume, requirements, criteria_list,
+            api_key=gemini_api_key or None,
+            skills=job_skills,
+            specialization=job_specialization,
+            employment_types=job_employment_types,
+        )
         logger.info(
             "Advanced scoring completed for job queueId=%s (total=%s)",
             job["queueJobId"],
@@ -427,7 +547,12 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
 
         # Score using standard criteria-based scoring
         scores = score_by_criteria(
-            parsed_resume, requirements, criteria_list, api_key=gemini_api_key or None)
+            parsed_resume, requirements, criteria_list,
+            api_key=gemini_api_key or None,
+            skills=job_skills,
+            specialization=job_specialization,
+            employment_types=job_employment_types,
+        )
         logger.info(
             "Calculated scores for job queueId=%s (total=%s)",
             job["queueJobId"],

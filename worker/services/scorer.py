@@ -173,18 +173,24 @@ def _truncate_requirements(requirements: str, max_length: int = MAX_REQUIREMENTS
 def _build_job_context_section(
     skills: Optional[str] = None,
     specialization: Optional[str] = None,
-    employment_types: Optional[str] = None
+    employment_types: Optional[str] = None,
+    languages: Optional[str] = None,
+    level: Optional[str] = None
 ) -> str:
     """Build job context section for the prompt."""
     context_parts = []
-    
+
     if specialization:
         context_parts.append(f"• Job Specialization/Field: {specialization}")
+    if level:
+        context_parts.append(f"• Job Level: {level}")
     if skills:
         context_parts.append(f"• Required Skills: {skills}")
+    if languages:
+        context_parts.append(f"• Required Languages: {languages}")
     if employment_types:
         context_parts.append(f"• Employment Type: {employment_types}")
-    
+
     if context_parts:
         return "JOB CONTEXT:\n" + "\n".join(context_parts) + "\n\n"
     return ""
@@ -196,16 +202,20 @@ def _build_criteria_prompt(
     criteria_list: List[Dict[str, Any]],
     skills: Optional[str] = None,
     specialization: Optional[str] = None,
-    employment_types: Optional[str] = None
+    employment_types: Optional[str] = None,
+    languages: Optional[str] = None,
+    level: Optional[str] = None
 ) -> str:
     """Build the AI prompt for criteria-based scoring."""
     # Truncate requirements to prevent token limit issues
     truncated_requirements = _truncate_requirements(requirements)
     criteria_json = json.dumps(criteria_list, ensure_ascii=False)
     resume_json = json.dumps(parsed_resume, ensure_ascii=False)
-    
+
     # Build job context section
-    job_context = _build_job_context_section(skills, specialization, employment_types)
+    job_context = _build_job_context_section(
+        skills, specialization, employment_types, languages, level
+    )
 
     return (
         f"{CRITERIA_SCORING_TEMPLATE}\n\n"
@@ -250,7 +260,7 @@ def _validate_ai_response_structure(result: Dict[str, Any]) -> None:
             raise AIScoringError(
                 f"Item at index {idx} missing required fields: {', '.join(missing_fields)}"
             )
-        
+
         # Must have either rawScore or score
         if "rawScore" not in item and "score" not in item:
             raise AIScoringError(
@@ -266,11 +276,11 @@ def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str,
     """Normalize AI response: ensure types and calculate weighted scores.
 
     FIXED: Now correctly applies weights ONCE (not twice).
-    
+
     Args:
         result: AI response dict (with rawScore per item)
         criteria_list: List of criteria with weights
-    
+
     Returns:
         Normalized result with weighted scores in 'score' field
     """
@@ -295,13 +305,13 @@ def _normalize_ai_response(result: Dict[str, Any], criteria_list: List[Dict[str,
     normalized_items = []
     for item in items:
         criteria_id = int(item.get("criteriaId", 0))
-        
+
         # Get raw score (prefer rawScore, fall back to score for backward compat)
         raw_score = float(item.get("rawScore") or item.get("score") or 0)
-        
+
         # Clamp raw_score to 0-100 range
         raw_score = max(0.0, min(100.0, raw_score))
-        
+
         weight = criteria_weights.get(criteria_id, 0.0)
 
         # Calculate weighted score: rawScore * weight
@@ -354,6 +364,8 @@ def score_by_criteria(
     skills: Optional[str] = None,
     specialization: Optional[str] = None,
     employment_types: Optional[str] = None,
+    languages: Optional[str] = None,
+    level: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Score the resume based on criteria list using Gemini.
 
@@ -365,6 +377,8 @@ def score_by_criteria(
         skills: Optional comma-separated list of required skills
         specialization: Optional job specialization/field name
         employment_types: Optional comma-separated list of employment types
+        languages: Optional comma-separated list of required languages
+        level: Optional job level (intern, junior, senior, etc.)
 
     Returns:
         Dict with AIExplanation, items (AIScoreDetail), and total_score
@@ -376,7 +390,8 @@ def score_by_criteria(
 
     prompt = _build_criteria_prompt(
         parsed_resume, requirements, criteria_list,
-        skills=skills, specialization=specialization, employment_types=employment_types
+        skills=skills, specialization=specialization, employment_types=employment_types,
+        languages=languages, level=level
     )
     model = get_model(api_key=api_key)
 
@@ -573,15 +588,19 @@ def _build_advanced_prompt(
     criteria_list: List[Dict[str, Any]],
     skills: Optional[str] = None,
     specialization: Optional[str] = None,
-    employment_types: Optional[str] = None
+    employment_types: Optional[str] = None,
+    languages: Optional[str] = None,
+    level: Optional[str] = None
 ) -> str:
     """Build the AI prompt for advanced criteria-based scoring."""
     truncated_requirements = _truncate_requirements(requirements)
     criteria_json = json.dumps(criteria_list, ensure_ascii=False)
     resume_json = json.dumps(parsed_resume, ensure_ascii=False)
-    
+
     # Build job context section
-    job_context = _build_job_context_section(skills, specialization, employment_types)
+    job_context = _build_job_context_section(
+        skills, specialization, employment_types, languages, level
+    )
 
     return (
         f"{ADVANCED_SCORING_TEMPLATE}\n\n"
@@ -601,6 +620,8 @@ def score_by_criteria_advanced(
     skills: Optional[str] = None,
     specialization: Optional[str] = None,
     employment_types: Optional[str] = None,
+    languages: Optional[str] = None,
+    level: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Advanced scoring for rescore mode - deeper analysis without re-parsing.
 
@@ -616,6 +637,8 @@ def score_by_criteria_advanced(
         skills: Optional comma-separated list of required skills
         specialization: Optional job specialization/field name
         employment_types: Optional comma-separated list of employment types
+        languages: Optional comma-separated list of required languages
+        level: Optional job level (intern, junior, senior, etc.)
 
     Returns:
         Dict with AIExplanation, items (AIScoreDetail), and total_score
@@ -630,7 +653,8 @@ def score_by_criteria_advanced(
     logger.info("Starting advanced scoring (rescore mode)")
     prompt = _build_advanced_prompt(
         parsed_resume, requirements, criteria_list,
-        skills=skills, specialization=specialization, employment_types=employment_types
+        skills=skills, specialization=specialization, employment_types=employment_types,
+        languages=languages, level=level
     )
     model = get_model(api_key=api_key)
 
@@ -655,9 +679,11 @@ def score_by_criteria_advanced(
         items = result["items"]
         result["total_score"] = _calculate_weighted_total_score(items)
 
-        logger.info("Advanced scoring completed (total_score=%s)", result["total_score"])
+        logger.info("Advanced scoring completed (total_score=%s)",
+                    result["total_score"])
         return result
     except AIScoringError:
         raise
     except Exception as exc:
-        raise AIScoringError("Failed to perform advanced scoring with Gemini") from exc
+        raise AIScoringError(
+            "Failed to perform advanced scoring with Gemini") from exc

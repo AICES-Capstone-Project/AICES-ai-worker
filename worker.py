@@ -122,19 +122,19 @@ def _validate_resume_with_ai(resume_text: str, parsed_resume: Dict[str, Any], ap
     try:
         from worker.services.gemini_client import get_model
         import google.generativeai as genai
-        
+
         model = get_model(api_key=api_key)
-        
+
         # Create a compact summary of parsed data for AI validation
         parsed_summary = {
             "has_work_experience": bool(parsed_resume.get("work_experience")),
             "has_education": bool(parsed_resume.get("education")),
             "has_skills": bool(parsed_resume.get("technical_skills")),
-            "has_basic_info": bool(parsed_resume.get("info", {}).get("fullName") or 
+            "has_basic_info": bool(parsed_resume.get("info", {}).get("fullName") or
                                    parsed_resume.get("info", {}).get("email")),
             "text_length": len(resume_text),
         }
-        
+
         validation_prompt = f"""You are a document classifier. Determine if the following document is a RESUME/CV or NOT a resume.
 
 Document text (first 2000 chars): {resume_text[:2000]}
@@ -161,21 +161,25 @@ A novel, story, article, or other non-resume document should return false."""
                 max_output_tokens=512,
             ),
         )
-        
+
         # Extract response text
         if hasattr(response, "parts") and response.parts:
-            raw_text = "".join(part.text for part in response.parts if getattr(part, "text", "")).strip()
+            raw_text = "".join(part.text for part in response.parts if getattr(
+                part, "text", "")).strip()
         elif response.candidates:
             candidate = response.candidates[0]
             if candidate.content and candidate.content.parts:
-                raw_text = "".join(part.text for part in candidate.content.parts if getattr(part, "text", "")).strip()
+                raw_text = "".join(part.text for part in candidate.content.parts if getattr(
+                    part, "text", "")).strip()
             else:
-                logger.warning("AI validation returned empty response, defaulting to False")
+                logger.warning(
+                    "AI validation returned empty response, defaulting to False")
                 return False
         else:
-            logger.warning("AI validation returned empty response, defaulting to False")
+            logger.warning(
+                "AI validation returned empty response, defaulting to False")
             return False
-        
+
         # Clean and parse JSON response
         cleaned = raw_text.strip()
         if cleaned.startswith("```json"):
@@ -185,19 +189,22 @@ A novel, story, article, or other non-resume document should return false."""
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
-        
+
         try:
             result = json.loads(cleaned)
             is_resume = result.get("is_resume", False)
             reason = result.get("reason", "")
-            logger.info("AI validation result: is_resume=%s, reason=%s", is_resume, reason)
+            logger.info(
+                "AI validation result: is_resume=%s, reason=%s", is_resume, reason)
             return bool(is_resume)
         except json.JSONDecodeError:
-            logger.warning("AI validation returned invalid JSON, defaulting to False")
+            logger.warning(
+                "AI validation returned invalid JSON, defaulting to False")
             return False
-            
+
     except Exception as exc:
-        logger.warning("AI validation failed: %s, falling back to rule-based validation", exc)
+        logger.warning(
+            "AI validation failed: %s, falling back to rule-based validation", exc)
         return None  # Signal to fall back to rule-based validation
 
 
@@ -206,7 +213,8 @@ def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = 
 
     if resume_text is not None and len(resume_text.strip()) < 50:
         # Almost no text extracted; likely not a resume
-        logger.info("Resume text too short (%d chars), not a resume", len(resume_text.strip()))
+        logger.info("Resume text too short (%d chars), not a resume",
+                    len(resume_text.strip()))
         return False
 
     if not isinstance(parsed_resume, dict):
@@ -244,7 +252,7 @@ def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = 
 
     has_experience = _list_has_content(parsed_resume.get("work_experience"))
     has_education = _list_has_content(parsed_resume.get("education"))
-    
+
     tech_skills = parsed_resume.get("technical_skills")
     has_skills = False
     if isinstance(tech_skills, dict):
@@ -256,7 +264,7 @@ def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = 
 
     # STRICT VALIDATION: Must have at least 2 of the 3 critical fields
     critical_fields_count = sum([has_experience, has_education, has_skills])
-    
+
     # Rule 1: Must have at least 2 critical fields (experience, education, or skills)
     if critical_fields_count < 2:
         logger.info(
@@ -264,29 +272,33 @@ def _looks_like_resume(parsed_resume: Dict[str, Any], resume_text: str | None = 
             "has_experience=%s, has_education=%s, has_skills=%s",
             critical_fields_count, has_experience, has_education, has_skills
         )
-        
+
         # Rule 2: Fallback - if has basic info AND at least 1 critical field, might be valid
         if has_basic_info and critical_fields_count >= 1:
-            logger.info("Has basic info + 1 critical field, using AI validation")
+            logger.info(
+                "Has basic info + 1 critical field, using AI validation")
             # Use AI validation as tie-breaker
             if resume_text and gemini_api_key:
-                ai_result = _validate_resume_with_ai(resume_text, parsed_resume, gemini_api_key)
+                ai_result = _validate_resume_with_ai(
+                    resume_text, parsed_resume, gemini_api_key)
                 if ai_result is not None:
                     return ai_result
             # If AI validation fails or not available, reject
             return False
         else:
             return False
-    
+
     # If we have 2+ critical fields, use AI validation to double-check
     # (in case it's a novel that happens to have some structured data)
     if resume_text and gemini_api_key and len(resume_text) > 200:
-        ai_result = _validate_resume_with_ai(resume_text, parsed_resume, gemini_api_key)
+        ai_result = _validate_resume_with_ai(
+            resume_text, parsed_resume, gemini_api_key)
         if ai_result is not None:
             return ai_result
-    
+
     # If we get here, rule-based validation passed
-    logger.info("Resume validation passed: has %d critical fields", critical_fields_count)
+    logger.info("Resume validation passed: has %d critical fields",
+                critical_fields_count)
     return True
 
 
@@ -295,15 +307,16 @@ def _validate_job_requirements_with_ai(requirements: str, criteria_list: list, a
     try:
         from worker.services.gemini_client import get_model
         import google.generativeai as genai
-        
+
         model = get_model(api_key=api_key)
-        
+
         # Build criteria text for validation
         criteria_text = ""
         if criteria_list:
-            criteria_names = [c.get("name", "") for c in criteria_list if isinstance(c, dict)]
+            criteria_names = [c.get("name", "")
+                              for c in criteria_list if isinstance(c, dict)]
             criteria_text = ", ".join(criteria_names)
-        
+
         validation_prompt = f"""You are a job posting validator. Determine if the following job requirements and criteria are MEANINGFUL and VALID for recruitment purposes.
 
 Job Requirements (first 1000 chars):
@@ -339,21 +352,25 @@ Be STRICT: If the text looks like random typing, testing, or placeholder content
                 max_output_tokens=256,
             ),
         )
-        
+
         # Extract response text
         if hasattr(response, "parts") and response.parts:
-            raw_text = "".join(part.text for part in response.parts if getattr(part, "text", "")).strip()
+            raw_text = "".join(part.text for part in response.parts if getattr(
+                part, "text", "")).strip()
         elif response.candidates:
             candidate = response.candidates[0]
             if candidate.content and candidate.content.parts:
-                raw_text = "".join(part.text for part in candidate.content.parts if getattr(part, "text", "")).strip()
+                raw_text = "".join(part.text for part in candidate.content.parts if getattr(
+                    part, "text", "")).strip()
             else:
-                logger.warning("AI job validation returned empty response, defaulting to True")
+                logger.warning(
+                    "AI job validation returned empty response, defaulting to True")
                 return True
         else:
-            logger.warning("AI job validation returned empty response, defaulting to True")
+            logger.warning(
+                "AI job validation returned empty response, defaulting to True")
             return True
-        
+
         # Clean and parse JSON response
         cleaned = raw_text.strip()
         if cleaned.startswith("```json"):
@@ -363,23 +380,200 @@ Be STRICT: If the text looks like random typing, testing, or placeholder content
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
-        
+
         try:
             result = json.loads(cleaned)
             is_valid = result.get("is_valid", True)
             reason = result.get("reason", "")
-            logger.info("AI job requirements validation: is_valid=%s, reason=%s", is_valid, reason)
+            logger.info(
+                "AI job requirements validation: is_valid=%s, reason=%s", is_valid, reason)
             return bool(is_valid)
         except json.JSONDecodeError:
-            logger.warning("AI job validation returned invalid JSON, defaulting to True")
+            logger.warning(
+                "AI job validation returned invalid JSON, defaulting to True")
             return True
-            
+
     except Exception as exc:
-        logger.warning("AI job requirements validation failed: %s, defaulting to True", exc)
+        logger.warning(
+            "AI job requirements validation failed: %s, defaulting to True", exc)
         return True
 
 
-def _send_invalid_resume_payload(job: Dict[str, Any], client: CallbackClient, error_type: str = "not_a_resume") -> None:
+# ============================================================================
+# JOB TITLE MATCHING - Use AI to validate candidate's job title matches
+# ============================================================================
+
+
+def _extract_titles_from_resume(parsed_resume: Dict[str, Any]) -> list[str]:
+    """Extract all job-related titles from parsed resume."""
+    titles = []
+
+    # Extract from work experience titles
+    work_exp = parsed_resume.get("work_experience", [])
+    if isinstance(work_exp, list):
+        for exp in work_exp:
+            if isinstance(exp, dict):
+                title = exp.get("title") or exp.get(
+                    "position") or exp.get("job_title")
+                if title and isinstance(title, str):
+                    titles.append(title.strip())
+                # Also get company for context
+                company = exp.get("company")
+                if company and title:
+                    titles.append(f"{title.strip()} at {company}")
+
+    # Extract from summary/headline
+    summary = parsed_resume.get("summary")
+    if summary and isinstance(summary, str):
+        titles.append(summary.strip())
+
+    # Extract from info section (headline, title, etc.)
+    info = parsed_resume.get("info", {})
+    if isinstance(info, dict):
+        headline = info.get("headline") or info.get(
+            "title") or info.get("professional_title")
+        if headline and isinstance(headline, str):
+            titles.append(headline.strip())
+
+    return titles
+
+
+def _validate_job_title_match(job_title: str, parsed_resume: Dict[str, Any], api_key: str | None = None) -> Dict[str, Any]:
+    """Validate if candidate's experience matches the required job title using AI.
+
+    Returns:
+        Dict with:
+        - matched: bool - True if job title matches
+        - reason: str - Explanation of the match/mismatch
+    """
+    # Default response for error cases
+    default_error_response = {
+        "matched": False,
+        "reason": "Unable to validate job title"
+    }
+
+    if not job_title or not job_title.strip():
+        # No job title specified, skip validation (consider as matched)
+        logger.info("No job title specified, skipping job title validation")
+        return {
+            "matched": True,
+            "reason": "No job title requirement specified"
+        }
+
+    resume_titles = _extract_titles_from_resume(parsed_resume)
+
+    if not resume_titles:
+        logger.warning("No job titles found in resume for matching")
+        return {
+            "matched": False,
+            "reason": "No job titles or work experience found in resume"
+        }
+
+    logger.info("Validating job title '%s' against resume titles: %s",
+                job_title, resume_titles[:5])
+
+    if not api_key:
+        logger.warning("No API key provided for job title validation")
+        return default_error_response
+
+    try:
+        from worker.services.gemini_client import get_model
+        import google.generativeai as genai
+
+        model = get_model(api_key=api_key)
+
+        validation_prompt = f"""You are a job title matcher for recruitment. Determine if the candidate's experience matches the required job title.
+
+REQUIRED JOB TITLE: {job_title}
+
+CANDIDATE'S TITLES/EXPERIENCE FROM RESUME:
+{chr(10).join(f'- {t}' for t in resume_titles[:15])}
+
+MATCHING RULES:
+1. Focus on the CORE FUNCTION of the job, not exact title match
+2. Similar roles should match:
+   - "Software Engineer" ≈ "Software Developer" ≈ "Programmer"
+   - "Backend Developer" ≈ "Backend Engineer" ≈ "Server-side Developer"
+   - "Frontend Developer" ≈ "UI Developer" ≈ "Web Developer"
+   - "Data Analyst" ≈ "Business Analyst" ≈ "BI Analyst"
+   - "AI Engineer" ≈ "Machine Learning Engineer" ≈ "ML Engineer"
+3. More senior roles can match junior requirements (Senior Developer → Developer)
+4. Related technology stack indicates match (e.g., "React Developer" matches "Frontend Developer")
+5. Don't match completely unrelated fields (e.g., "Cook" ≠ "Software Developer")
+
+Respond with ONLY a JSON object:
+{{
+    "matched": true or false,
+    "reason": "Brief explanation of why it matches or doesn't match"
+}}
+
+Examples:
+- Required: "Backend Developer", Resume has "Software Engineer - Backend" → {{"matched": true, "reason": "Applicant was 'Software Engineer - Backend' which is equivalent to 'Backend Developer'"}}
+- Required: "Data Analyst", Resume has "Marketing Manager" → {{"matched": false, "reason": "No data analysis or analytics experience found in resume"}}
+- Required: "Frontend Developer", Resume has "React Developer" → {{"matched": true, "reason": "React Developer is a specialized frontend role"}}"""
+
+        response = model.generate_content(
+            validation_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.0,
+                max_output_tokens=256,
+            ),
+        )
+
+        # Extract response
+        if hasattr(response, "parts") and response.parts:
+            raw_text = "".join(part.text for part in response.parts if getattr(
+                part, "text", "")).strip()
+        elif response.candidates:
+            candidate = response.candidates[0]
+            if candidate.content and candidate.content.parts:
+                raw_text = "".join(part.text for part in candidate.content.parts if getattr(
+                    part, "text", "")).strip()
+            else:
+                logger.warning(
+                    "AI job title validation returned empty response")
+                return default_error_response
+        else:
+            logger.warning("AI job title validation returned empty response")
+            return default_error_response
+
+        # Clean and parse JSON
+        cleaned = raw_text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        result = json.loads(cleaned)
+        matched = result.get("matched", False)
+        reason = result.get("reason", "")
+
+        logger.info(
+            "AI job title validation: matched=%s, reason=%s", matched, reason)
+
+        return {
+            "matched": bool(matched),
+            "reason": str(reason) if reason else ("Job title matches" if matched else "Job title does not match")
+        }
+
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "AI job title validation returned invalid JSON: %s", exc)
+        return default_error_response
+    except Exception as exc:
+        logger.warning("AI job title validation failed: %s", exc)
+        return default_error_response
+
+
+def _send_invalid_resume_payload(
+    job: Dict[str, Any],
+    client: CallbackClient,
+    error_type: str = "not_a_resume",
+    reason: str | None = None
+) -> None:
     """Send a minimal payload indicating an invalid upload or job data."""
     payload = {
         "queueJobId": str(job["queueJobId"]),
@@ -388,12 +582,23 @@ def _send_invalid_resume_payload(job: Dict[str, Any], client: CallbackClient, er
         "error": error_type,
     }
 
+    # Add campaignId if provided
+    campaign_id = job.get("campaignId")
+    if campaign_id is not None:
+        payload["campaignId"] = int(campaign_id)
+
+    # Add reason if provided (for job_title_not_matched error)
+    if reason:
+        payload["reason"] = reason
+
     logger.warning(
-        "Detected invalid data (error=%s). Sending error payload queueId=%s resumeId=%s jobId=%s",
+        "Detected invalid data (error=%s, reason=%s). Sending error payload queueId=%s resumeId=%s jobId=%s campaignId=%s",
         error_type,
+        reason,
         job["queueJobId"],
         job["resumeId"],
         job["jobId"],
+        campaign_id,
     )
     client.send_ai_result(payload)
 
@@ -401,16 +606,17 @@ def _send_invalid_resume_payload(job: Dict[str, Any], client: CallbackClient, er
 def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: str) -> None:
     # Get mode from job payload (default to "parse" for backward compatibility)
     mode = job.get("mode", "parse")
-    
+
     # Validate required fields based on mode
     if mode == "rescore":
         required_fields = ["resumeId", "queueJobId", "jobId", "parsedData"]
     else:  # mode == "parse"
         required_fields = ["resumeId", "queueJobId", "jobId", "fileUrl"]
-    
+
     missing = [field for field in required_fields if field not in job]
     if missing:
-        raise ValueError(f"Job missing required fields for mode '{mode}': {', '.join(missing)}")
+        raise ValueError(
+            f"Job missing required fields for mode '{mode}': {', '.join(missing)}")
 
     # Validate requirements and criteria from Redis payload
     if "requirements" not in job:
@@ -454,8 +660,14 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
 
     # Extract optional job context fields (new fields from backend)
     job_skills = job.get("skills")  # comma-separated skills list
-    job_specialization = job.get("specialization")  # job field/specialization name
-    job_employment_types = job.get("employmentTypes")  # comma-separated employment types
+    # job field/specialization name
+    job_specialization = job.get("specialization")
+    # comma-separated employment types
+    job_employment_types = job.get("employmentTypes")
+    # comma-separated languages to recruit
+    job_languages = job.get("languages")
+    job_level = job.get("level")  # job level (intern, junior, senior, etc.)
+    job_title = job.get("jobTitle")  # job title for matching validation
 
     logger.info(
         "Starting job queueId=%s resumeId=%s jobId=%s mode=%s",
@@ -464,12 +676,15 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         job["jobId"],
         mode,
     )
-    if job_skills or job_specialization or job_employment_types:
+    if job_skills or job_specialization or job_employment_types or job_languages or job_level or job_title:
         logger.info(
-            "Job context: skills=%s, specialization=%s, employmentTypes=%s",
+            "Job context: title=%s, skills=%s, specialization=%s, employmentTypes=%s, languages=%s, level=%s",
+            job_title,
             job_skills[:50] if job_skills else None,
             job_specialization,
             job_employment_types,
+            job_languages,
+            job_level,
         )
 
     # =========================================================================
@@ -482,29 +697,52 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             job["resumeId"],
             job["jobId"],
         )
-        _send_invalid_resume_payload(job, client, "not_a_resume")
+        _send_invalid_resume_payload(job, client, "invalid_job_data")
         return
 
     # =========================================================================
     # MODE: RESCORE - Use existing parsed data, advanced scoring only
     # =========================================================================
     if mode == "rescore":
-        logger.info("Mode: RESCORE - Using pre-parsed data for advanced analysis")
-        
+        logger.info(
+            "Mode: RESCORE - Using pre-parsed data for advanced analysis")
+
         # Get parsed resume data from payload (sent by backend)
         parsed_resume = job["parsedData"]
         if not parsed_resume:
             raise ValueError("parsedData is empty for rescore mode")
-        
+
         # Ensure parsed_resume is a dict
         if isinstance(parsed_resume, str):
             try:
                 parsed_resume = json.loads(parsed_resume)
             except json.JSONDecodeError as exc:
                 raise ValueError("Failed to parse parsedData JSON") from exc
-        
-        logger.info("Using pre-parsed resume data (keys: %s)", list(parsed_resume.keys()))
-        
+
+        logger.info("Using pre-parsed resume data (keys: %s)",
+                    list(parsed_resume.keys()))
+
+        # =====================================================================
+        # VALIDATE JOB TITLE MATCHING (if jobTitle is provided)
+        # =====================================================================
+        if job_title:
+            title_match_result = _validate_job_title_match(
+                job_title, parsed_resume, gemini_api_key)
+            if not title_match_result.get("matched", False):
+                logger.warning(
+                    "Job title mismatch for queueId=%s resumeId=%s jobId=%s (required: %s, reason: %s)",
+                    job["queueJobId"],
+                    job["resumeId"],
+                    job["jobId"],
+                    job_title,
+                    title_match_result.get("reason", "Unknown"),
+                )
+                _send_invalid_resume_payload(
+                    job, client, "job_title_not_matched",
+                    reason=title_match_result.get("reason")
+                )
+                return
+
         # Score using ADVANCED criteria-based scoring
         scores = score_by_criteria_advanced(
             parsed_resume, requirements, criteria_list,
@@ -512,25 +750,28 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             skills=job_skills,
             specialization=job_specialization,
             employment_types=job_employment_types,
+            languages=job_languages,
+            level=job_level,
         )
         logger.info(
             "Advanced scoring completed for job queueId=%s (total=%s)",
             job["queueJobId"],
             scores.get("total_score"),
         )
-        
+
         # Extract candidate info from existing parsed data
         candidate_info = _extract_candidate_info(parsed_resume)
-        
+
         # Build payload - rawJson stays the same (no re-parsing)
-        _send_result_payload(job, scores, parsed_resume, candidate_info, client)
+        _send_result_payload(job, scores, parsed_resume,
+                             candidate_info, client)
         return
 
     # =========================================================================
     # MODE: PARSE - Download file, parse resume, then score (default flow)
     # =========================================================================
     logger.info("Mode: PARSE - Downloading and parsing resume file")
-    
+
     file_path, should_cleanup = _download_file(job["fileUrl"])
     try:
         logger.debug("Downloaded resume to %s (cleanup=%s)",
@@ -542,8 +783,29 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         logger.info("Parsed resume sections: %s", list(parsed_resume.keys()))
 
         if not _looks_like_resume(parsed_resume, resume_text, gemini_api_key):
-            _send_invalid_resume_payload(job, client)
+            _send_invalid_resume_payload(job, client, "invalid_resume_data")
             return
+
+        # =====================================================================
+        # VALIDATE JOB TITLE MATCHING (if jobTitle is provided)
+        # =====================================================================
+        if job_title:
+            title_match_result = _validate_job_title_match(
+                job_title, parsed_resume, gemini_api_key)
+            if not title_match_result.get("matched", False):
+                logger.warning(
+                    "Job title mismatch for queueId=%s resumeId=%s jobId=%s (required: %s, reason: %s)",
+                    job["queueJobId"],
+                    job["resumeId"],
+                    job["jobId"],
+                    job_title,
+                    title_match_result.get("reason", "Unknown"),
+                )
+                _send_invalid_resume_payload(
+                    job, client, "job_title_not_matched",
+                    reason=title_match_result.get("reason")
+                )
+                return
 
         # Score using standard criteria-based scoring
         scores = score_by_criteria(
@@ -552,6 +814,8 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             skills=job_skills,
             specialization=job_specialization,
             employment_types=job_employment_types,
+            languages=job_languages,
+            level=job_level,
         )
         logger.info(
             "Calculated scores for job queueId=%s (total=%s)",
@@ -563,10 +827,28 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         candidate_info = _extract_candidate_info(parsed_resume)
 
         # Build and send payload
-        _send_result_payload(job, scores, parsed_resume, candidate_info, client)
+        _send_result_payload(job, scores, parsed_resume,
+                             candidate_info, client)
     finally:
         if should_cleanup and file_path.exists():
             file_path.unlink()
+
+
+def _build_require_skills(job: Dict[str, Any]) -> str | None:
+    """Build requireSkills string from requirements and skills fields."""
+    parts = []
+
+    # Get skills from job
+    skills = job.get("skills")
+    if skills and isinstance(skills, str) and skills.strip():
+        parts.append(skills.strip())
+
+    # Optionally, we could extract skills keywords from requirements
+    # For now, we just use the skills field as the primary source
+
+    if parts:
+        return ", ".join(parts)
+    return None
 
 
 def _send_result_payload(
@@ -589,6 +871,12 @@ def _send_result_payload(
     if not isinstance(ai_explanation, str):
         ai_explanation = str(ai_explanation) if ai_explanation else ""
 
+    # Build requireSkills from job requirements and skills
+    require_skills = _build_require_skills(job)
+
+    # Get campaignId from job (optional)
+    campaign_id = job.get("campaignId")
+
     # Build payload exactly as .NET expects
     payload = {
         "queueJobId": str(job["queueJobId"]),
@@ -598,8 +886,13 @@ def _send_result_payload(
         "AIExplanation": ai_explanation,
         "AIScoreDetail": ai_score_detail,
         "rawJson": parsed_resume,
+        "requireSkills": require_skills,
         "candidateInfo": candidate_info,
     }
+
+    # Add campaignId if provided
+    if campaign_id is not None:
+        payload["campaignId"] = int(campaign_id)
 
     # === DETAILED PAYLOAD VALIDATION & LOGGING ===
     logger.info("=" * 80)
@@ -614,6 +907,9 @@ def _send_result_payload(
         payload["resumeId"]).__name__, payload["resumeId"])
     logger.info("  • jobId: %s (value: %s)", type(
         payload["jobId"]).__name__, payload["jobId"])
+    if campaign_id is not None:
+        logger.info("  • campaignId: %s (value: %s)", type(
+            payload["campaignId"]).__name__, payload["campaignId"])
     logger.info("  • totalResumeScore: %s (value: %s)", type(
         payload["totalResumeScore"]).__name__, payload["totalResumeScore"])
     logger.info("  • AIExplanation: %s (length: %s)", type(
@@ -622,6 +918,9 @@ def _send_result_payload(
         payload["AIScoreDetail"]).__name__, len(payload["AIScoreDetail"]))
     logger.info("  • rawJson: %s (keys: %s)", type(payload["rawJson"]).__name__, list(
         payload["rawJson"].keys()) if isinstance(payload["rawJson"], dict) else "N/A")
+    logger.info("  • requireSkills: %s (value: %s)", type(
+        payload["requireSkills"]).__name__ if payload["requireSkills"] else "NoneType",
+        payload["requireSkills"][:100] if payload["requireSkills"] else None)
     logger.info("  • candidateInfo: %s", type(
         payload["candidateInfo"]).__name__)
 

@@ -579,13 +579,9 @@ def _send_invalid_resume_payload(
         "queueJobId": str(job["queueJobId"]),
         "resumeId": int(job["resumeId"]),
         "jobId": int(job["jobId"]),
+        "campaignId": int(job["campaignId"]),
         "error": error_type,
     }
-
-    # Add campaignId if provided
-    campaign_id = job.get("campaignId")
-    if campaign_id is not None:
-        payload["campaignId"] = int(campaign_id)
 
     # Add reason if provided (for job_title_not_matched error)
     if reason:
@@ -598,7 +594,7 @@ def _send_invalid_resume_payload(
         job["queueJobId"],
         job["resumeId"],
         job["jobId"],
-        campaign_id,
+        job["campaignId"],
     )
     client.send_ai_result(payload)
 
@@ -609,9 +605,11 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
 
     # Validate required fields based on mode
     if mode == "rescore":
-        required_fields = ["resumeId", "queueJobId", "jobId", "parsedData"]
+        required_fields = ["resumeId", "queueJobId",
+                           "jobId", "campaignId", "parsedData"]
     else:  # mode == "parse"
-        required_fields = ["resumeId", "queueJobId", "jobId", "fileUrl"]
+        required_fields = ["resumeId", "queueJobId",
+                           "jobId", "campaignId", "fileUrl"]
 
     missing = [field for field in required_fields if field not in job]
     if missing:
@@ -834,20 +832,36 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             file_path.unlink()
 
 
-def _build_require_skills(job: Dict[str, Any]) -> str | None:
-    """Build requireSkills string from requirements and skills fields."""
+def _build_require_skills(match_skills: str | None, missing_skills: str | None) -> str | None:
+    """Build requireSkills string from matchSkills and missingSkills.
+
+    requireSkills = matchSkills + missingSkills (combined, unique skills)
+    """
     parts = []
 
-    # Get skills from job
-    skills = job.get("skills")
-    if skills and isinstance(skills, str) and skills.strip():
-        parts.append(skills.strip())
+    # Parse matchSkills if provided
+    if match_skills and isinstance(match_skills, str) and match_skills.strip():
+        # Split by comma and add to parts
+        match_list = [s.strip() for s in match_skills.split(",") if s.strip()]
+        parts.extend(match_list)
 
-    # Optionally, we could extract skills keywords from requirements
-    # For now, we just use the skills field as the primary source
+    # Parse missingSkills if provided
+    if missing_skills and isinstance(missing_skills, str) and missing_skills.strip():
+        # Split by comma and add to parts
+        missing_list = [s.strip()
+                        for s in missing_skills.split(",") if s.strip()]
+        parts.extend(missing_list)
 
-    if parts:
-        return ", ".join(parts)
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_parts = []
+    for part in parts:
+        if part.lower() not in seen:  # Case-insensitive deduplication
+            seen.add(part.lower())
+            unique_parts.append(part)
+
+    if unique_parts:
+        return ", ".join(unique_parts)
     return None
 
 
@@ -862,26 +876,28 @@ def _send_result_payload(
     # Get AIScoreDetail from AI response items ONLY (already normalized with int criteriaId)
     ai_score_detail = scores.get("items", [])
 
+    # Get matchSkills and missingSkills from AI scoring
+    match_skills = scores.get("matchSkills")
+    missing_skills = scores.get("missingSkills")
+
     # Merge matchSkills and missingSkills from AI scoring into candidate_info
-    candidate_info["matchSkills"] = scores.get("matchSkills")
-    candidate_info["missingSkills"] = scores.get("missingSkills")
+    candidate_info["matchSkills"] = match_skills
+    candidate_info["missingSkills"] = missing_skills
 
     # Ensure AIExplanation is a string (already normalized in scorer)
     ai_explanation = scores.get("AIExplanation", "")
     if not isinstance(ai_explanation, str):
         ai_explanation = str(ai_explanation) if ai_explanation else ""
 
-    # Build requireSkills from job requirements and skills
-    require_skills = _build_require_skills(job)
-
-    # Get campaignId from job (optional)
-    campaign_id = job.get("campaignId")
+    # Build requireSkills from matchSkills + missingSkills
+    require_skills = _build_require_skills(match_skills, missing_skills)
 
     # Build payload exactly as .NET expects
     payload = {
         "queueJobId": str(job["queueJobId"]),
         "resumeId": int(job["resumeId"]),
         "jobId": int(job["jobId"]),
+        "campaignId": int(job["campaignId"]),
         "totalResumeScore": float(scores.get("total_score", 0)),
         "AIExplanation": ai_explanation,
         "AIScoreDetail": ai_score_detail,
@@ -889,10 +905,6 @@ def _send_result_payload(
         "requireSkills": require_skills,
         "candidateInfo": candidate_info,
     }
-
-    # Add campaignId if provided
-    if campaign_id is not None:
-        payload["campaignId"] = int(campaign_id)
 
     # === DETAILED PAYLOAD VALIDATION & LOGGING ===
     logger.info("=" * 80)
@@ -907,9 +919,8 @@ def _send_result_payload(
         payload["resumeId"]).__name__, payload["resumeId"])
     logger.info("  • jobId: %s (value: %s)", type(
         payload["jobId"]).__name__, payload["jobId"])
-    if campaign_id is not None:
-        logger.info("  • campaignId: %s (value: %s)", type(
-            payload["campaignId"]).__name__, payload["campaignId"])
+    logger.info("  • campaignId: %s (value: %s)", type(
+        payload["campaignId"]).__name__, payload["campaignId"])
     logger.info("  • totalResumeScore: %s (value: %s)", type(
         payload["totalResumeScore"]).__name__, payload["totalResumeScore"])
     logger.info("  • AIExplanation: %s (length: %s)", type(

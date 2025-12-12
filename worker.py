@@ -20,7 +20,7 @@ from config import load_settings
 from redis_client import get_redis_connection
 from worker.services.file_reader import extract_text_from_file
 from worker.services.parser import ats_extractor
-from worker.services.scorer import score_by_criteria, score_by_criteria_advanced
+from worker.services.scorer import score_by_criteria
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -578,6 +578,7 @@ def _send_invalid_resume_payload(
     payload = {
         "queueJobId": str(job["queueJobId"]),
         "resumeId": int(job["resumeId"]),
+        "applicationId": int(job["applicationId"]),
         "jobId": int(job["jobId"]),
         "campaignId": int(job["campaignId"]),
         "error": error_type,
@@ -588,11 +589,12 @@ def _send_invalid_resume_payload(
         payload["reason"] = reason
 
     logger.warning(
-        "Detected invalid data (error=%s, reason=%s). Sending error payload queueId=%s resumeId=%s jobId=%s campaignId=%s",
+        "Detected invalid data (error=%s, reason=%s). Sending error payload queueId=%s resumeId=%s applicationId=%s jobId=%s campaignId=%s",
         error_type,
         reason,
         job["queueJobId"],
         job["resumeId"],
+        job["applicationId"],
         job["jobId"],
         job["campaignId"],
     )
@@ -604,11 +606,11 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
     mode = job.get("mode", "parse")
 
     # Validate required fields based on mode
-    if mode == "rescore":
-        required_fields = ["resumeId", "queueJobId",
+    if mode == "score":
+        required_fields = ["resumeId", "applicationId", "queueJobId",
                            "jobId", "campaignId", "parsedData"]
-    else:  # mode == "parse"
-        required_fields = ["resumeId", "queueJobId",
+    else:  # mode == "parse" (default)
+        required_fields = ["resumeId", "applicationId", "queueJobId",
                            "jobId", "campaignId", "fileUrl"]
 
     missing = [field for field in required_fields if field not in job]
@@ -699,16 +701,16 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         return
 
     # =========================================================================
-    # MODE: RESCORE - Use existing parsed data, advanced scoring only
+    # MODE: SCORE - Use existing parsed data, scoring only (no parsing)
     # =========================================================================
-    if mode == "rescore":
+    if mode == "score":
         logger.info(
-            "Mode: RESCORE - Using pre-parsed data for advanced analysis")
+            "Mode: SCORE - Using pre-parsed data for scoring only")
 
         # Get parsed resume data from payload (sent by backend)
         parsed_resume = job["parsedData"]
         if not parsed_resume:
-            raise ValueError("parsedData is empty for rescore mode")
+            raise ValueError("parsedData is empty for score mode")
 
         # Ensure parsed_resume is a dict
         if isinstance(parsed_resume, str):
@@ -741,8 +743,8 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
                 )
                 return
 
-        # Score using ADVANCED criteria-based scoring
-        scores = score_by_criteria_advanced(
+        # Score using standard criteria-based scoring
+        scores = score_by_criteria(
             parsed_resume, requirements, criteria_list,
             api_key=gemini_api_key or None,
             skills=job_skills,
@@ -752,7 +754,7 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
             level=job_level,
         )
         logger.info(
-            "Advanced scoring completed for job queueId=%s (total=%s)",
+            "Scoring completed for job queueId=%s (total=%s)",
             job["queueJobId"],
             scores.get("total_score"),
         )
@@ -760,9 +762,9 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         # Extract candidate info from existing parsed data
         candidate_info = _extract_candidate_info(parsed_resume)
 
-        # Build payload - rawJson stays the same (no re-parsing)
-        _send_result_payload(job, scores, parsed_resume,
-                             candidate_info, client)
+        # Build payload WITHOUT rawJson (resume already in database)
+        _send_result_payload(job, scores, None,
+                             candidate_info, client, mode="score")
         return
 
     # =========================================================================
@@ -824,9 +826,9 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
         # Extract candidate info (guaranteed fields with None defaults)
         candidate_info = _extract_candidate_info(parsed_resume)
 
-        # Build and send payload
+        # Build and send payload with rawJson
         _send_result_payload(job, scores, parsed_resume,
-                             candidate_info, client)
+                             candidate_info, client, mode="parse")
     finally:
         if should_cleanup and file_path.exists():
             file_path.unlink()
@@ -868,11 +870,21 @@ def _build_require_skills(match_skills: str | None, missing_skills: str | None) 
 def _send_result_payload(
     job: Dict[str, Any],
     scores: Dict[str, Any],
-    parsed_resume: Dict[str, Any],
+    parsed_resume: Dict[str, Any] | None,
     candidate_info: Dict[str, Any],
-    client: CallbackClient
+    client: CallbackClient,
+    mode: str = "parse"
 ) -> None:
-    """Build and send the result payload to backend."""
+    """Build and send the result payload to backend.
+
+    Args:
+        job: Job data from Redis
+        scores: Scoring results
+        parsed_resume: Parsed resume JSON (None for score mode)
+        candidate_info: Candidate information
+        client: Callback client
+        mode: Processing mode ("parse" or "score")
+    """
     # Get AIScoreDetail from AI response items ONLY (already normalized with int criteriaId)
     ai_score_detail = scores.get("items", [])
 
@@ -896,15 +908,19 @@ def _send_result_payload(
     payload = {
         "queueJobId": str(job["queueJobId"]),
         "resumeId": int(job["resumeId"]),
+        "applicationId": int(job["applicationId"]),
         "jobId": int(job["jobId"]),
         "campaignId": int(job["campaignId"]),
         "totalResumeScore": float(scores.get("total_score", 0)),
         "AIExplanation": ai_explanation,
         "AIScoreDetail": ai_score_detail,
-        "rawJson": parsed_resume,
         "requireSkills": require_skills,
         "candidateInfo": candidate_info,
     }
+
+    # Include rawJson only for parse mode (not for score mode)
+    if mode == "parse" and parsed_resume is not None:
+        payload["rawJson"] = parsed_resume
 
     # === DETAILED PAYLOAD VALIDATION & LOGGING ===
     logger.info("=" * 80)
@@ -917,6 +933,8 @@ def _send_result_payload(
         payload["queueJobId"]).__name__, payload["queueJobId"])
     logger.info("  • resumeId: %s (value: %s)", type(
         payload["resumeId"]).__name__, payload["resumeId"])
+    logger.info("  • applicationId: %s (value: %s)", type(
+        payload["applicationId"]).__name__, payload["applicationId"])
     logger.info("  • jobId: %s (value: %s)", type(
         payload["jobId"]).__name__, payload["jobId"])
     logger.info("  • campaignId: %s (value: %s)", type(
@@ -927,8 +945,14 @@ def _send_result_payload(
         payload["AIExplanation"]).__name__, len(payload["AIExplanation"]))
     logger.info("  • AIScoreDetail: %s (count: %s)", type(
         payload["AIScoreDetail"]).__name__, len(payload["AIScoreDetail"]))
-    logger.info("  • rawJson: %s (keys: %s)", type(payload["rawJson"]).__name__, list(
-        payload["rawJson"].keys()) if isinstance(payload["rawJson"], dict) else "N/A")
+
+    # Log rawJson only if present (parse mode)
+    if "rawJson" in payload:
+        logger.info("  • rawJson: %s (keys: %s)", type(payload["rawJson"]).__name__, list(
+            payload["rawJson"].keys()) if isinstance(payload["rawJson"], dict) else "N/A")
+    else:
+        logger.info("  • rawJson: NOT INCLUDED (score mode)")
+
     logger.info("  • requireSkills: %s (value: %s)", type(
         payload["requireSkills"]).__name__ if payload["requireSkills"] else "NoneType",
         payload["requireSkills"][:100] if payload["requireSkills"] else None)

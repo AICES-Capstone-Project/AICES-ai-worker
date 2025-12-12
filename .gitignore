@@ -67,3 +67,6 @@ docker-compose.override.yml
 # Nếu callback_client.py hoặc redis_client.py chứa secrets
 # thì KHÔNG ignore → vì code cần chạy.
 # Nhưng nếu bạn để credentials trong đó thì phải refactor qua ENV.
+
+# Markdown files
+*.md

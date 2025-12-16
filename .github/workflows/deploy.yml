@@ -15,13 +15,14 @@ jobs:
         uses: appleboy/ssh-action@v0.1.6
         with:
           host: ${{ secrets.VM_HOST }}
-          username: hoang
+          username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_KEY }}
+          port: 22
           script: |
             set -e
 
             echo ">>> Go to project folder"
-            cd /home/hoang/AICES-ai-worker
+            cd ${{ secrets.VM_FOLDER }}
 
             echo ">>> Current commit on VM:"
             git rev-parse HEAD

@@ -22,15 +22,12 @@ from worker.services.file_reader import extract_text_from_file
 from worker.services.parser import ats_extractor
 from worker.services.scorer import score_by_criteria
 
-import subprocess
-
 logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
 )
 
-print("RUNNING COMMIT:", subprocess.getoutput("git rev-parse HEAD"))
 
 JOB_QUEUE = "resume_parse_queue"
 MAX_RETRIES = 3

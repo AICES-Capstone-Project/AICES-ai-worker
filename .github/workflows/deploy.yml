@@ -41,6 +41,6 @@ jobs:
 
             echo ">>> Restarting containers..."
             docker compose down
-            docker compose up --scale worker=1 -d
+            docker compose up --scale worker=50 -d
 
             echo ">>> Deployment done successfully."

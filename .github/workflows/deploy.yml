@@ -24,6 +24,9 @@ jobs:
             echo ">>> Go to project folder"
             cd ${{ secrets.VM_FOLDER }}
 
+            echo ">>> Fix git safe directory"
+            git config --global --add safe.directory ${{ secrets.VM_FOLDER }}
+
             echo ">>> Current commit on VM:"
             git rev-parse HEAD
 

@@ -11,25 +11,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-
       - name: SSH to VM and deploy
         uses: appleboy/ssh-action@v0.1.6
         with:
           host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
+          username: hoang
           key: ${{ secrets.VM_KEY }}
           script: |
-            cd ${{ secrets.VM_FOLDER }}
+            set -e
+
+            echo ">>> Go to project folder"
+            cd /home/hoang/AICES-ai-worker
+
+            echo ">>> Current commit on VM:"
+            git rev-parse HEAD
+
             echo ">>> Pulling latest code..."
-            git pull
+            git pull origin main
 
-            echo ">>> Building images..."
-            docker compose build
+            echo ">>> New commit on VM:"
+            git rev-parse HEAD
 
-            echo ">>> Stopping containers..."
+            echo ">>> Building images (no cache)..."
+            docker compose build --no-cache
+
+            echo ">>> Restarting containers..."
             docker compose down
-
-            echo ">>> Starting containers with worker=1 ..."
             docker compose up --scale worker=1 -d
 
             echo ">>> Deployment done successfully."

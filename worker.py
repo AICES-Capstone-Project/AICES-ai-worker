@@ -21,6 +21,7 @@ from redis_client import get_redis_connection
 from worker.services.file_reader import extract_text_from_file
 from worker.services.parser import ats_extractor
 from worker.services.scorer import score_by_criteria
+from worker.services.comparator import compare_candidates
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -30,6 +31,7 @@ logging.basicConfig(
 
 
 JOB_QUEUE = "resume_parse_queue"
+COMPARISON_QUEUE = "candidate_comparison_queue"
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
 
@@ -582,6 +584,7 @@ def _send_invalid_resume_payload(
         "applicationId": int(job["applicationId"]),
         "jobId": int(job["jobId"]),
         "campaignId": int(job["campaignId"]),
+        "companyId": int(job["companyId"]),
         "error": error_type,
     }
 
@@ -590,7 +593,7 @@ def _send_invalid_resume_payload(
         payload["reason"] = reason
 
     logger.warning(
-        "Detected invalid data (error=%s, reason=%s). Sending error payload queueId=%s resumeId=%s applicationId=%s jobId=%s campaignId=%s",
+        "Detected invalid data (error=%s, reason=%s). Sending error payload queueId=%s resumeId=%s applicationId=%s jobId=%s campaignId=%s companyId=%s",
         error_type,
         reason,
         job["queueJobId"],
@@ -598,6 +601,7 @@ def _send_invalid_resume_payload(
         job["applicationId"],
         job["jobId"],
         job["campaignId"],
+        job["companyId"],
     )
     client.send_ai_result(payload)
 
@@ -609,10 +613,10 @@ def _process_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: st
     # Validate required fields based on mode
     if mode == "score":
         required_fields = ["resumeId", "applicationId", "queueJobId",
-                           "jobId", "campaignId", "parsedData"]
+                           "jobId", "campaignId", "companyId", "parsedData"]
     else:  # mode == "parse" (default)
         required_fields = ["resumeId", "applicationId", "queueJobId",
-                           "jobId", "campaignId", "fileUrl"]
+                           "jobId", "campaignId", "companyId", "fileUrl"]
 
     missing = [field for field in required_fields if field not in job]
     if missing:
@@ -912,6 +916,7 @@ def _send_result_payload(
         "applicationId": int(job["applicationId"]),
         "jobId": int(job["jobId"]),
         "campaignId": int(job["campaignId"]),
+        "companyId": int(job["companyId"]),
         "totalResumeScore": float(scores.get("total_score", 0)),
         "AIExplanation": ai_explanation,
         "AIScoreDetail": ai_score_detail,
@@ -940,6 +945,8 @@ def _send_result_payload(
         payload["jobId"]).__name__, payload["jobId"])
     logger.info("  • campaignId: %s (value: %s)", type(
         payload["campaignId"]).__name__, payload["campaignId"])
+    logger.info("  • companyId: %s (value: %s)", type(
+        payload["companyId"]).__name__, payload["companyId"])
     logger.info("  • totalResumeScore: %s (value: %s)", type(
         payload["totalResumeScore"]).__name__, payload["totalResumeScore"])
     logger.info("  • AIExplanation: %s (length: %s)", type(
@@ -996,6 +1003,149 @@ def _send_result_payload(
     )
 
 
+def _process_comparison_job(job: Dict[str, Any], client: CallbackClient, gemini_api_key: str) -> None:
+    """Process a candidate comparison job from Redis queue.
+
+    Args:
+        job: Comparison job data from Redis
+        client: Callback client for sending results
+        gemini_api_key: Gemini API key for AI processing
+    """
+    # Validate required fields
+    required_fields = ["comparisonId", "queueJobId", "companyId", "campaignId",
+                       "jobId", "jobTitle", "requirements", "criteria", "candidates"]
+
+    missing = [field for field in required_fields if field not in job]
+    if missing:
+        raise ValueError(
+            f"Comparison job missing required fields: {', '.join(missing)}")
+
+    comparison_id = job["comparisonId"]
+    queue_job_id = job["queueJobId"]
+    company_id = job["companyId"]
+    campaign_id = job["campaignId"]
+    job_id = job["jobId"]
+
+    logger.info(
+        "Starting comparison job comparisonId=%s queueJobId=%s jobId=%s candidates=%d",
+        comparison_id,
+        queue_job_id,
+        job_id,
+        len(job.get("candidates", [])),
+    )
+
+    # Validate candidates count
+    candidates = job.get("candidates", [])
+    if len(candidates) < 2:
+        logger.error(
+            "Insufficient candidates for comparison (minimum 2 required, got %d)", len(candidates))
+        _send_comparison_error_payload(
+            job, client,
+            error="insufficient_candidates",
+            reason=f"Not enough candidates for comparison (minimum 2 required, got {len(candidates)})"
+        )
+        return
+
+    if len(candidates) > 5:
+        logger.error(
+            "Too many candidates for comparison (maximum 5 allowed, got %d)", len(candidates))
+        _send_comparison_error_payload(
+            job, client,
+            error="invalid_data",
+            reason=f"Too many candidates for comparison (maximum 5 allowed, got {len(candidates)})"
+        )
+        return
+
+    try:
+        # Call comparison service
+        result = compare_candidates(job, api_key=gemini_api_key)
+
+        # Check if comparison returned error
+        if result.get("status") == "error":
+            logger.error(
+                "Comparison failed for comparisonId=%s: %s - %s",
+                comparison_id,
+                result.get("error"),
+                result.get("reason"),
+            )
+            _send_comparison_error_payload(
+                job, client,
+                error=result.get("error", "processing_failed"),
+                reason=result.get("reason", "Unknown error during comparison")
+            )
+            return
+
+        # Build success payload
+        payload = {
+            "queueJobId": str(queue_job_id),
+            "comparisonId": int(comparison_id),
+            "campaignId": int(campaign_id),
+            "jobId": int(job_id),
+            "companyId": int(company_id),
+            "resultJson": result,
+        }
+
+        logger.info(
+            "✅ Comparison completed successfully for comparisonId=%s with %d candidates",
+            comparison_id,
+            len(result.get("candidates", [])),
+        )
+
+        # Send result to backend
+        client.send_comparison_result(payload)
+        logger.info(
+            "Submitted comparison results comparisonId=%s queueJobId=%s",
+            comparison_id,
+            queue_job_id,
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "Error processing comparison job comparisonId=%s: %s",
+            comparison_id,
+            exc,
+        )
+        _send_comparison_error_payload(
+            job, client,
+            error="processing_failed",
+            reason=f"Internal error: {str(exc)}"
+        )
+
+
+def _send_comparison_error_payload(
+    job: Dict[str, Any],
+    client: CallbackClient,
+    error: str,
+    reason: str
+) -> None:
+    """Send an error payload for comparison job.
+
+    Args:
+        job: Job data from Redis
+        client: Callback client
+        error: Error code
+        reason: Error reason/message
+    """
+    payload = {
+        "queueJobId": str(job["queueJobId"]),
+        "comparisonId": int(job["comparisonId"]),
+        "campaignId": int(job["campaignId"]),
+        "jobId": int(job["jobId"]),
+        "companyId": int(job["companyId"]),
+        "error": error,
+        "reason": reason,
+    }
+
+    logger.warning(
+        "Sending comparison error payload: comparisonId=%s error=%s reason=%s",
+        job["comparisonId"],
+        error,
+        reason,
+    )
+
+    client.send_comparison_result(payload)
+
+
 def worker_loop() -> None:
     settings = load_settings()
     logger.info("Loaded settings: redis=%s backend=%s",
@@ -1012,12 +1162,17 @@ def worker_loop() -> None:
 
     signal.signal(signal.SIGINT, _graceful_shutdown)
     signal.signal(signal.SIGTERM, _graceful_shutdown)
-
-    logger.info("AI Resume Worker started. Listening on queue '%s'", JOB_QUEUE)
+    logger.info("Commit 1")
+    logger.info(
+        "AI Resume Worker started. Listening on queues: ['%s', '%s']", JOB_QUEUE, COMPARISON_QUEUE)
 
     while True:
         try:
-            _, raw_job = redis_conn.blpop(JOB_QUEUE)
+            # BLPOP can monitor multiple queues - returns (queue_name, data)
+            queue_name, raw_job = redis_conn.blpop(
+                [JOB_QUEUE, COMPARISON_QUEUE])
+            queue_name = queue_name.decode(
+                "utf-8") if isinstance(queue_name, bytes) else queue_name
         except Exception as exc:  # pragma: no cover - redis network failures
             logger.error("Redis BLPOP failed: %s", exc)
             time.sleep(RETRY_DELAY_SECONDS)
@@ -1025,25 +1180,37 @@ def worker_loop() -> None:
 
         try:
             job = _parse_job(raw_job)
-            logger.info("Dequeued job queueId=%s", job.get("queueJobId"))
+            logger.info("Dequeued job from queue '%s' queueId=%s",
+                        queue_name, job.get("queueJobId"))
         except ValueError as exc:
-            logger.error("Dropping invalid job payload: %s", exc)
+            logger.error(
+                "Dropping invalid job payload from queue '%s': %s", queue_name, exc)
             continue
 
+        # Route to appropriate processor based on queue
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                _process_job(job, callback_client, settings.gemini_api_key)
+                if queue_name == COMPARISON_QUEUE:
+                    logger.info(
+                        "Processing comparison job (attempt %s/%s)", attempt, MAX_RETRIES)
+                    _process_comparison_job(
+                        job, callback_client, settings.gemini_api_key)
+                else:  # JOB_QUEUE (resume parsing/scoring)
+                    logger.info(
+                        "Processing resume job (attempt %s/%s)", attempt, MAX_RETRIES)
+                    _process_job(job, callback_client, settings.gemini_api_key)
                 break
             except Exception as exc:
                 logger.exception(
-                    "Failed to process job %s (attempt %s/%s)",
+                    "Failed to process job from queue '%s' %s (attempt %s/%s)",
+                    queue_name,
                     job.get("queueJobId"),
                     attempt,
                     MAX_RETRIES,
                 )
                 if attempt >= MAX_RETRIES:
-                    logger.error("Giving up on job %s after %s attempts", job.get(
-                        "queueJobId"), MAX_RETRIES)
+                    logger.error("Giving up on job %s from queue '%s' after %s attempts",
+                                 job.get("queueJobId"), queue_name, MAX_RETRIES)
                 else:
                     time.sleep(RETRY_DELAY_SECONDS * attempt)
 

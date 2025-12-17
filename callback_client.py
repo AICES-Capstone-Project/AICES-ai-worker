@@ -18,9 +18,11 @@ class CallbackClient:
         self.base_url = base_url.rstrip("/")
         # Add this line
         self.result_url = f"{self.base_url}/api/resumes/result/ai"
+        self.comparison_result_url = f"{self.base_url}/api/resumes/result/ai/comparison"
         self.session = requests.Session()
         logger.info("Initialized callback client with URL: %s",
                     self.result_url)
+        logger.info("Comparison callback URL: %s", self.comparison_result_url)
 
     def send_ai_result(self, payload: Dict[str, Any]) -> None:
         """Send AI parsing results back to backend API."""
@@ -81,6 +83,69 @@ class CallbackClient:
         except Exception as exc:
             logger.error("=" * 80)
             logger.error("💥 EXCEPTION DURING API CALL")
+            logger.error("=" * 80)
+            logger.error("Exception Type: %s", type(exc).__name__)
+            logger.error("Exception Message: %s", exc)
+            logger.error("=" * 80)
+            raise
+
+    def send_comparison_result(self, payload: Dict[str, Any]) -> None:
+        """Send AI comparison results back to backend API."""
+        logger.info("=" * 80)
+        logger.info("🚀 SENDING COMPARISON RESULT TO BACKEND API")
+        logger.info("=" * 80)
+        logger.info("📍 Target URL: %s", self.comparison_result_url)
+
+        # Log full payload with pretty formatting
+        try:
+            formatted_payload = json.dumps(
+                payload, indent=2, ensure_ascii=False)
+            logger.info("📦 Full Comparison Payload:\n%s", formatted_payload)
+        except Exception as e:
+            logger.warning("⚠️ Could not format payload as JSON: %s", e)
+            logger.info("📦 Raw Payload: %s", payload)
+
+        logger.info("=" * 80)
+
+        try:
+            logger.info("🔄 Making POST request to comparison endpoint...")
+            response = self.session.post(
+                self.comparison_result_url, json=payload, timeout=60, verify=False
+            )
+
+            logger.info("📡 Response Status Code: %s", response.status_code)
+
+            if response.status_code != 200:
+                logger.error("=" * 80)
+                logger.error("❌ ERROR RESPONSE FROM BACKEND")
+                logger.error("=" * 80)
+                logger.error("Status Code: %s", response.status_code)
+                logger.error("Response Headers: %s", dict(response.headers))
+                try:
+                    logger.error("Response Body:\n%s", response.text)
+                except Exception as e:
+                    logger.error("Could not read response body: %s", e)
+                logger.error("=" * 80)
+            else:
+                logger.info("✅ Successfully sent comparison result")
+                try:
+                    # First 500 chars
+                    logger.info("Response Body: %s", response.text[:500])
+                except Exception:
+                    pass
+
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as exc:
+            logger.error("=" * 80)
+            logger.error("💥 EXCEPTION DURING COMPARISON API CALL")
+            logger.error("=" * 80)
+            logger.error("Exception Type: %s", type(exc).__name__)
+            logger.error("Exception Message: %s", exc)
+            logger.error("=" * 80)
+            raise
+        except Exception as exc:
+            logger.error("=" * 80)
+            logger.error("💥 EXCEPTION DURING COMPARISON API CALL")
             logger.error("=" * 80)
             logger.error("Exception Type: %s", type(exc).__name__)
             logger.error("Exception Message: %s", exc)

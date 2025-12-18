@@ -485,35 +485,28 @@ def _validate_job_title_match(job_title: str, parsed_resume: Dict[str, Any], api
 
         model = get_model(api_key=api_key)
 
-        validation_prompt = f"""You are a job title matcher for recruitment. Determine if the candidate's experience matches the required job title.
+        validation_prompt = f"""
+            You are an ATS job title matcher. Decide if the candidate's past roles are RELEVANT enough to the required job.
 
-REQUIRED JOB TITLE: {job_title}
+            REQUIRED JOB TITLE:
+            {job_title}
 
-CANDIDATE'S TITLES/EXPERIENCE FROM RESUME:
-{chr(10).join(f'- {t}' for t in resume_titles[:15])}
+            CANDIDATE TITLES (from resume):
+            {chr(10).join(f'- {t}' for t in resume_titles[:10])}
 
-MATCHING RULES:
-1. Focus on the CORE FUNCTION of the job, not exact title match
-2. Similar roles should match:
-   - "Software Engineer" ≈ "Software Developer" ≈ "Programmer"
-   - "Backend Developer" ≈ "Backend Engineer" ≈ "Server-side Developer"
-   - "Frontend Developer" ≈ "UI Developer" ≈ "Web Developer"
-   - "Data Analyst" ≈ "Business Analyst" ≈ "BI Analyst"
-   - "AI Engineer" ≈ "Machine Learning Engineer" ≈ "ML Engineer"
-3. More senior roles can match junior requirements (Senior Developer → Developer)
-4. Related technology stack indicates match (e.g., "React Developer" matches "Frontend Developer")
-5. Don't match completely unrelated fields (e.g., "Cook" ≠ "Software Developer")
+            MATCHING RULES:
+            1. Focus on CORE FUNCTION, not exact wording
+            2. Accept related roles in the same field or domain
+            3. Partial match is acceptable (≈50% relevance is PASS)
+            4. Higher seniority can match lower roles
+            5. Reject only if roles are clearly unrelated
 
-Respond with ONLY a JSON object:
-{{
-    "matched": true or false,
-    "reason": "Brief explanation of why it matches or doesn't match"
-}}
-
-Examples:
-- Required: "Backend Developer", Resume has "Software Engineer - Backend" → {{"matched": true, "reason": "Applicant was 'Software Engineer - Backend' which is equivalent to 'Backend Developer'"}}
-- Required: "Data Analyst", Resume has "Marketing Manager" → {{"matched": false, "reason": "No data analysis or analytics experience found in resume"}}
-- Required: "Frontend Developer", Resume has "React Developer" → {{"matched": true, "reason": "React Developer is a specialized frontend role"}}"""
+            OUTPUT ONLY JSON:
+            {{
+            "matched": true | false,
+            "reason": "Brief explanation of why it matches or doesn't match"
+            }}
+        """
 
         response = model.generate_content(
             validation_prompt,

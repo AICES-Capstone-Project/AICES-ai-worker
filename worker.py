@@ -1053,7 +1053,7 @@ def _process_comparison_job(job: Dict[str, Any], client: CallbackClient, gemini_
         # Call comparison service
         result = compare_candidates(job, api_key=gemini_api_key)
 
-        # Check if comparison returned error
+        # Check if comparison returned error (error responses still have status field)
         if result.get("status") == "error":
             logger.error(
                 "Comparison failed for comparisonId=%s: %s - %s",
@@ -1068,10 +1068,37 @@ def _process_comparison_job(job: Dict[str, Any], client: CallbackClient, gemini_
             )
             return
 
+        # Extract candidate names from result to build comparisonName
+        candidate_names = []
+        for candidate_result in result.get("candidates", []):
+            analysis = candidate_result.get("analysis", {})
+            candidate_name = analysis.get("candidateName", "")
+            if candidate_name:
+                candidate_names.append(candidate_name)
+            else:
+                # Fallback: try to extract from parsed data
+                app_id = candidate_result.get("applicationId")
+                for candidate in candidates:
+                    if candidate.get("applicationId") == app_id:
+                        parsed_data = candidate.get("parsedData", {})
+                        if isinstance(parsed_data, dict):
+                            info = parsed_data.get("info", {})
+                            if isinstance(info, dict):
+                                name = info.get("fullName") or info.get("name")
+                                if name:
+                                    candidate_names.append(name)
+                                    break
+                        break
+
+        # Build comparisonName: "name1 x name2 x name3"
+        comparison_name = " x ".join(
+            candidate_names) if candidate_names else "Comparison"
+
         # Build success payload
         payload = {
             "queueJobId": str(queue_job_id),
             "comparisonId": int(comparison_id),
+            "comparisonName": comparison_name,
             "campaignId": int(campaign_id),
             "jobId": int(job_id),
             "companyId": int(company_id),
@@ -1119,9 +1146,25 @@ def _send_comparison_error_payload(
         error: Error code
         reason: Error reason/message
     """
+    # Try to extract candidate names from job data for comparisonName
+    candidate_names = []
+    candidates = job.get("candidates", [])
+    for candidate in candidates:
+        parsed_data = candidate.get("parsedData", {})
+        if isinstance(parsed_data, dict):
+            info = parsed_data.get("info", {})
+            if isinstance(info, dict):
+                name = info.get("fullName") or info.get("name")
+                if name:
+                    candidate_names.append(name)
+
+    comparison_name = " x ".join(
+        candidate_names) if candidate_names else "Comparison"
+
     payload = {
         "queueJobId": str(job["queueJobId"]),
         "comparisonId": int(job["comparisonId"]),
+        "comparisonName": comparison_name,
         "campaignId": int(job["campaignId"]),
         "jobId": int(job["jobId"]),
         "companyId": int(job["companyId"]),

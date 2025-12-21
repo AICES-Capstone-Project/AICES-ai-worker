@@ -134,12 +134,14 @@ Skills:
         # Build dynamic analysis requirements from criteria
         analysis_requirements = []
         analysis_requirements.append(
-            "1. **overallSummary**: Overall summary of the candidate (2-3 sentences)")
+            "1. **candidateName**: Full name of the candidate (extracted from resume)")
         analysis_requirements.append(
-            "2. **jobFit**: Assessment of fit for this position (2-3 sentences)")
+            "2. **overallSummary**: Overall summary of the candidate (2-3 sentences)")
+        analysis_requirements.append(
+            "3. **jobFit**: Assessment of fit for this position (2-3 sentences)")
 
         # Add criteria-based fields
-        for idx, criterion in enumerate(criteria_list, start=3):
+        for idx, criterion in enumerate(criteria_list, start=4):
             criteria_name = criterion.get("name", "")
             if criteria_name:
                 analysis_requirements.append(
@@ -157,6 +159,7 @@ Skills:
 
         # Build JSON structure example dynamically
         analysis_fields_example = []
+        analysis_fields_example.append('        "candidateName": "...",')
         analysis_fields_example.append('        "overallSummary": "...",')
         analysis_fields_example.append('        "jobFit": "...",')
 
@@ -204,7 +207,6 @@ Analyze each candidate based on:
 Return the result as JSON with the following structure (DO NOT include ```json):
 
 {{
-  "status": "success",
   "candidates": [
     {{
       "applicationId": <id>,
@@ -287,16 +289,9 @@ Return the result as JSON with the following structure (DO NOT include ```json):
             if not isinstance(result["candidates"], list):
                 raise ValueError("'candidates' is not a list")
 
-            # Ensure status field
-            if "status" not in result:
-                result["status"] = "success"
-
-            # Add job context to result
-            result["campaignId"] = job_data.get("campaignId")
-            result["jobId"] = job_data.get("jobId")
-
             # Build required fields list dynamically from criteria
-            required_analysis_fields = ["overallSummary", "jobFit"]
+            required_analysis_fields = [
+                "candidateName", "overallSummary", "jobFit"]
             for criterion in criteria_list:
                 criteria_name = criterion.get("name", "")
                 if criteria_name:
@@ -320,6 +315,26 @@ Return the result as JSON with the following structure (DO NOT include ```json):
                         if field == "recommendation":
                             analysis[field] = {
                                 "rank": 999, "reason": "Missing ranking information"}
+                        elif field == "candidateName":
+                            # Try to extract name from parsed data
+                            candidate_idx = next(
+                                (i for i, c in enumerate(candidates)
+                                 if c.get("applicationId") == candidate_result["applicationId"]), -1)
+                            if candidate_idx >= 0:
+                                parsed_data = candidates[candidate_idx].get(
+                                    "parsedData", {})
+                                if isinstance(parsed_data, dict):
+                                    info = parsed_data.get("info", {})
+                                    if isinstance(info, dict):
+                                        default_name = info.get("fullName") or info.get(
+                                            "name") or f"Candidate {candidate_idx + 1}"
+                                    else:
+                                        default_name = f"Candidate {candidate_idx + 1}"
+                                else:
+                                    default_name = f"Candidate {candidate_idx + 1}"
+                            else:
+                                default_name = "Unknown Candidate"
+                            analysis[field] = default_name
                         else:
                             analysis[field] = f"No information available about {field}"
 

@@ -34,6 +34,7 @@ JOB_QUEUE = "resume_parse_queue"
 COMPARISON_QUEUE = "candidate_comparison_queue"
 MAX_RETRIES = 3
 RETRY_DELAY_SECONDS = 5
+RATE_LIMIT_COOLDOWN_SECONDS = 65  # Cooldown period when 429 rate limit is hit
 
 
 def _download_file(file_url: str) -> Tuple[Path, bool]:
@@ -64,6 +65,65 @@ def _parse_job(raw_job: bytes) -> Dict[str, Any]:
         return json.loads(raw_job.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("Invalid job payload received from Redis") from exc
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Check if an exception is a rate limit (429) error.
+
+    Args:
+        exc: The exception to check
+
+    Returns:
+        True if the exception indicates a rate limit error, False otherwise
+    """
+    error_msg = str(exc).lower()
+    error_type = type(exc).__name__.lower()
+
+    # Check for common rate limit indicators
+    rate_limit_indicators = [
+        "429",
+        "rate limit",
+        "quota exceeded",
+        "resource exhausted",
+        "too many requests",
+        "resourceexhausted"
+    ]
+
+    return any(indicator in error_msg or indicator in error_type
+               for indicator in rate_limit_indicators)
+
+
+def _extract_retry_delay_from_error(exc: Exception) -> int:
+    """Extract retry delay from Google Gemini rate limit error.
+
+    Args:
+        exc: The exception from Gemini API
+
+    Returns:
+        Retry delay in seconds (default: RATE_LIMIT_COOLDOWN_SECONDS if not found)
+    """
+    import re
+
+    error_msg = str(exc)
+
+    # Try to extract "Please retry in XX.XXs" from error message
+    retry_pattern = r'Please retry in ([\d.]+)s'
+    match = re.search(retry_pattern, error_msg)
+    if match:
+        retry_seconds = float(match.group(1))
+        # Add 2 seconds buffer for safety
+        return int(retry_seconds) + 2
+
+    # Try to extract from retryDelay field: "retryDelay": "43s"
+    retry_delay_pattern = r'"retryDelay"\s*:\s*"(\d+)s"'
+    match = re.search(retry_delay_pattern, error_msg)
+    if match:
+        retry_seconds = int(match.group(1))
+        # Add 2 seconds buffer for safety
+        return retry_seconds + 2
+
+    # Default fallback
+    return RATE_LIMIT_COOLDOWN_SECONDS
 
 
 def _extract_candidate_info(parsed_resume: Dict[str, Any]) -> Dict[str, Any]:
@@ -1237,6 +1297,47 @@ def worker_loop() -> None:
                     _process_job(job, callback_client, settings.gemini_api_key)
                 break
             except Exception as exc:
+                # Check if this is a rate limit (429) error
+                if _is_rate_limit_error(exc):
+                    # Extract retry delay from Google's response (or use default)
+                    retry_delay = _extract_retry_delay_from_error(exc)
+
+                    logger.warning(
+                        "⚠️  Rate limit (429) detected for job %s from queue '%s'. "
+                        "Re-queueing job and cooling down for %s seconds (Google suggested: %s)...",
+                        job.get("queueJobId"),
+                        queue_name,
+                        retry_delay,
+                        # Show original suggested time (before our +2s buffer)
+                        retry_delay - 2
+                    )
+
+                    # Re-queue the job to the end of the queue
+                    try:
+                        redis_conn.rpush(queue_name, raw_job)
+                        logger.info(
+                            "✅ Job %s re-queued successfully to queue '%s'",
+                            job.get("queueJobId"),
+                            queue_name
+                        )
+                    except Exception as requeue_exc:
+                        logger.error(
+                            "Failed to re-queue job %s: %s",
+                            job.get("queueJobId"),
+                            requeue_exc
+                        )
+
+                    # Sleep to allow rate limit to reset
+                    logger.info(
+                        "💤 Worker cooling down for %s seconds to wait for rate limit reset...",
+                        retry_delay
+                    )
+                    time.sleep(retry_delay)
+                    logger.info(
+                        "✅ Cooldown complete. Resuming job processing...")
+                    break  # Don't retry this job, it's already re-queued
+
+                # For non-rate-limit errors, use standard retry logic
                 logger.exception(
                     "Failed to process job from queue '%s' %s (attempt %s/%s)",
                     queue_name,
